@@ -55,6 +55,47 @@ $$
 
 The logit exponent of $-4$ produces moderate cost sensitivity: cheaper technologies capture larger shares, but the model does not fully concentrate on a single technology, reflecting real-world market friction, policy preferences, and resource constraints.
 
+### Preference factor logit
+
+Technology competition now uses **MERGE-style preference factors** instead of GCAM share weights. The market share of technology $i$ is:
+
+$$
+s_i = \frac{\exp\bigl(-k \cdot (LCOE_i + P_i)\bigr)}{\sum_j \exp\bigl(-k \cdot (LCOE_j + P_j)\bigr)}
+$$
+
+where $k = 0.3$ is the logit slope and $P_i$ is a technology-specific preference factor. Preference factors encode non-cost advantages (policy support, reliability, public acceptance) that shift shares away from pure cost minimization.
+
+Preference factors **decay at 2%/yr** toward zero, so that competition converges toward pure-cost outcomes over time:
+
+$$
+P_i(t) = P_i(0) \cdot (1 - 0.02)^{t - t_0}
+$$
+
+This ensures that near-term calibration fidelity is high while long-run projections are increasingly driven by economics.
+
+### Stock turnover
+
+Existing power plant fleet changes gradually with a characteristic turnover time of $\tau = 40$ years. In each model period the generation mix adjusts toward the target (logit-derived) shares, but only partially:
+
+$$
+s_i^{\text{new}} = s_i^{\text{old}} + \bigl(s_i^{\text{target}} - s_i^{\text{old}}\bigr) \cdot \frac{\Delta t}{\tau}
+$$
+
+This creates **inertia** — even if solar becomes the cheapest technology, coal capacity does not disappear overnight. The 40-year timescale is consistent with typical power plant economic lifetimes.
+
+### Learning curves
+
+Four technologies experience endogenous cost reductions as cumulative global deployment grows:
+
+| Technology | Learning rate | Cost floor (% of initial) |
+|-----------|--------------|--------------------------|
+| Solar PV | 20% | 20% |
+| Wind | 12% | 20% |
+| Biomass | 5% | 20% |
+| Nuclear | 3% | 20% |
+
+The learning rate is the fractional cost reduction per doubling of cumulative capacity. For example, a 20% learning rate means that each time cumulative solar PV deployment doubles, capital cost falls by 20%. Costs are bounded below at 20% of the initial capital cost to prevent unrealistically low asymptotic values.
+
 ### Calibration
 
 In the base year (2020), share weights $\alpha_i$ are calibrated to reproduce observed regional electricity generation mixes. For example:
@@ -103,7 +144,19 @@ Hydrogen production uses two competing technologies:
 | SMR (Steam Methane Reforming) | gas | 0.72 | 600 | 0.90 | 95% |
 | Electrolysis | electricity | 0.70 | 1,000 | 0.50 | 5% |
 
-Competition uses relative cost logit with $\beta = -3$. In the base year, SMR dominates due to lower gas prices relative to electricity.
+Competition uses the **preference factor logit** ($k = 0.3$) with the same formulation as the electricity sector. Preference factors decay at 2%/yr toward pure-cost competition.
+
+### Stock turnover
+
+Hydrogen production capacity turns over with $\tau = 25$ years — faster than electricity ($\tau = 40$) because hydrogen plants are smaller and have shorter economic lifetimes:
+
+$$
+s_i^{\text{new}} = s_i^{\text{old}} + \bigl(s_i^{\text{target}} - s_i^{\text{old}}\bigr) \cdot \frac{\Delta t}{\tau}
+$$
+
+### Electrolysis learning
+
+Electrolysis capital cost declines with a **15% learning rate** (cost falls 15% per doubling of cumulative electrolyzer deployment), with a cost floor at 20% of initial capital cost. This allows green hydrogen to become cost-competitive with SMR as renewable electricity prices fall and electrolyzer deployment scales up.
 
 **Implementation**: [`ghim/energy/hydrogen.py`](../ghim/energy/hydrogen.py) — class `HydrogenSector`.
 
@@ -111,7 +164,43 @@ Competition uses relative cost logit with $\beta = -3$. In the base year, SMR do
 
 ## Final Energy Demand
 
-Final demand is divided into three sectors, each with a base-year energy demand level and a fuel mix determined by logit competition among 6 energy carriers.
+Final demand is modeled as a **2-level nested demand tree** for each of the three sectors. Each node in the tree uses the preference-factor logit ($k = 0.3$, preference decay at 2%/yr) and stock turnover to determine shares.
+
+### Nested demand tree
+
+Each sector is split into subsectors (level 1), and each subsector allocates demand across energy carriers (level 2):
+
+```
+Industry
+├── Heavy industry — 45%        [τ=30y]
+│   └── coal / gas / electricity / refined liquids / biomass / hydrogen
+├── Light manufacturing — 45%   [τ=30y]
+│   └── electricity / gas / refined liquids / coal / biomass / hydrogen
+└── Data centers / AI — 10%     [τ=7y]
+    └── electricity (100%)
+
+Buildings
+├── Residential — 55%           [τ=50y]
+│   └── electricity / gas / biomass / refined liquids / coal / hydrogen
+└── Commercial — 45%            [τ=50y]
+    └── electricity / gas / refined liquids / biomass / coal / hydrogen
+
+Transport
+├── Passenger — 60%             [τ=15y]
+│   └── refined liquids / electricity / gas / hydrogen / biomass
+└── Freight — 40%               [τ=15y]
+    └── refined liquids / gas / electricity / hydrogen / biomass
+```
+
+**Data centers as a separate subsector** is justified by IEA WEO 2024 projections: data center energy demand is nearly 100% electricity, is growing rapidly due to AI workloads, and has short equipment turnover cycles (~7 years). Separating it from traditional industry prevents the model from under-projecting electricity demand growth in regions with large cloud/AI infrastructure.
+
+Stock turnover at each tree level follows the same formulation as the supply sectors:
+
+$$
+s_i^{\text{new}} = s_i^{\text{old}} + \bigl(s_i^{\text{target}} - s_i^{\text{old}}\bigr) \cdot \frac{\Delta t}{\tau}
+$$
+
+The turnover time $\tau$ varies by subsector to reflect real-world capital stock lifetimes — buildings turn over slowly ($\tau = 50$y), while data center equipment refreshes quickly ($\tau = 7$y).
 
 ### Demand sectors and base-year energy
 
@@ -140,22 +229,7 @@ $$
 
 Income elasticities less than 1 imply that energy demand grows slower than GDP — reflecting structural change and efficiency improvements in an economy. Transport has the highest elasticity, consistent with empirical evidence that transport demand is strongly income-driven.
 
-### Fuel switching
-
-Within each sector, the fuel mix is determined by logit competition ($\beta = -3$) among 6 energy carriers:
-
-| Carrier | Industry | Buildings | Transport |
-|---------|----------|-----------|-----------|
-| Coal | 25% | 5% | 0% |
-| Refined liquids | 15% | 10% | 90% |
-| Gas | 25% | 30% | 3% |
-| Electricity | 25% | 40% | 3% |
-| Biomass | 8% | 14% | 3% |
-| Hydrogen | 2% | 1% | 1% |
-
-These base-year shares are used to calibrate logit share weights. As relative fuel prices change over time, the logit model shifts the fuel mix accordingly — for example, cheaper electricity could increase electrification of transport.
-
-**Implementation**: [`ghim/energy/demand.py`](../ghim/energy/demand.py) — class `FinalDemand`.
+**Implementation**: [`ghim/energy/demand.py`](../ghim/energy/demand.py) — classes `DemandNode`, `DemandLeaf`, `FinalDemand`.
 
 ---
 

@@ -107,3 +107,47 @@ CI runs `rcmdcheck::rcmdcheck(args = c("--no-manual", "--ignore-vignettes"), err
 ## Contribution Process
 
 PRs target feature branches on JGCRI/gcam-core. Branch naming: `feature/` or `bugfix/` prefix. PRs require a GCAM Core Model Proposal document describing purpose, methods, and verification.
+
+---
+
+## GHIM Python Energy Module (`ghim/`)
+
+GHIM is a separate Python-based energy model in the `ghim/` directory. It is independent of the GCAM C++ model but uses gcamdata input files.
+
+### Setup
+```bash
+conda activate ghim                                    # Python 3.11
+pip install -e ".[dev]"                                # from repo root (pyproject.toml is at root)
+```
+
+### Key Commands
+```bash
+python -m ghim.run --scenario SSP2                     # Run full model (10 regions, 31 periods, 2000-2150)
+python -m pytest ghim/tests/ -v                        # Run tests (40 tests)
+cd docs && sphinx-build -b html . _build/html          # Build docs
+```
+
+### Architecture (Phase 2)
+- **DICE-style GDP**: `Y = A*K^α*L^(1-α)`, TFP calibrated from SSP, energy cost feedback
+- **Preference factor logit** (MERGE-style): `exp(-k*(C+P))/Σ` with decay
+- **Stock turnover**: Gradual technology transition with sector-specific turnover times
+- **Learning curves** (WITCH-style): Experience curves for solar, wind, electrolysis, etc.
+- **Nested demand**: Industry (heavy/light/data centers), buildings (residential/commercial), transport (passenger/freight)
+- **10 AR6 R10 regions**, direct ISO→R10 mapping via `mapping/region_classification.tsv`
+
+### Module Structure
+```
+ghim/
+├── config.py          # Parameters (time, DICE, logit, learning, turnover)
+├── econ/klem.py       # DICE production function, capital accumulation
+├── energy/            # Electricity (8 tech), hydrogen, refining, demand trees
+├── solver/recursive.py # Period-by-period solver with endogenous GDP
+├── data/ssp.py        # SSP loading with 2150 extrapolation
+└── output/reporting.py # CSV export, summary tables
+```
+
+### Important Notes
+- `pyproject.toml` is at **repo root**, not inside `ghim/`
+- User manages git themselves — do NOT auto-commit
+- CLAUDE.md is NOT auto-updated — only edit when explicitly asked
+- Use `mapping/region_classification.tsv` for direct ISO→R10 (NOT GCAM R32)

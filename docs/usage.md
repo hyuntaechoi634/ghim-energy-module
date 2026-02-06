@@ -27,7 +27,7 @@ The `.[dev]` install includes test dependencies (pytest, pytest-cov).
 python -m pytest ghim/tests/ -v
 ```
 
-All 38 tests should pass.
+All 40 tests should pass.
 
 ## Running the Model
 
@@ -37,7 +37,7 @@ All 38 tests should pass.
 python -m ghim.run --scenario SSP2
 ```
 
-This runs the full model for all 10 regions, 17 periods (2020–2100), and writes results to `ghim_output/`.
+This runs the full model for all 10 regions, 31 periods (2000–2150), producing 310 results total, and writes them to `ghim_output/`.
 
 ### Command-line options
 
@@ -53,18 +53,19 @@ This runs the full model for all 10 regions, 17 periods (2020–2100), and write
 === GHIM Energy Model Results ===
 
 Global Totals:
-  Year  CO2 (GtCO2)  Energy (EJ)   GDP (T$)  Pop (B)
-----------------------------------------------------
-  2020         37.7        380.2      123.7     7.78
-  2030         46.4        528.7      173.4     8.48
-  2050         61.8        847.1      280.8     9.58
-  2070         76.7       1230.5      412.3    10.07
-  2100         96.3       1889.3      640.6     9.87
+  Year  CO2 (GtCO2)  Energy (EJ)   GDP (T$)    SSP GDP  Pop (B)
+--------------------------------------------------------------
+  2020         27.5        373.4      120.8      123.7     7.78
+  2030         34.2        519.6      169.3      173.4     8.48
+  2050         46.2        830.3      274.1      280.8     9.58
+  2070         57.8       1199.3      401.1      412.3    10.07
+  2100         73.5       1830.1      621.7      640.6     9.87
+  2150        108.5       3833.2     1339.3     1384.1     9.14
 ```
 
 ## Output files
 
-When CSV export is enabled (default), the model writes three files:
+When CSV export is enabled (default), the model writes four files:
 
 ### `ghim_output/results.csv`
 
@@ -83,6 +84,10 @@ Year × region matrix of CO$_2$ emissions (MtCO$_2$).
 ### `ghim_output/energy_mix.csv`
 
 Year × region × technology matrix of electricity generation (EJ).
+
+### `ghim_output/gdp_comparison.csv`
+
+Year × region matrix comparing endogenous GDP vs SSP reference GDP.
 
 ## Using as a library
 
@@ -123,6 +128,13 @@ for r in results:
 | `final_demand_ej` | dict[str, dict] | Sector → carrier → demand (EJ) |
 | `fuel_prices` | dict[str, float] | Carrier → price ($/GJ) |
 | `emissions_mtco2` | float | Total CO$_2$ emissions (MtCO$_2$) |
+| `gross_output` | float | Gross output Y = A*K^α*L^(1-α) (billion USD) |
+| `net_output` | float | Net output = gross - energy cost (billion USD) |
+| `capital_stock` | float | Capital stock K (billion USD) |
+| `investment` | float | Investment I (billion USD/yr) |
+| `energy_cost` | float | Total energy cost (billion USD) |
+| `ssp_reference_gdp` | float | SSP reference GDP for comparison (billion USD) |
+| `tfp` | float | Total factor productivity A(t) |
 
 ## Testing
 
@@ -140,7 +152,7 @@ python -m pytest ghim/tests/ -v
 | `test_logit.py` | 9 | Logit shares, calibration roundtrip, edge cases |
 | `test_data_loading.py` | 7 | Region mapping, SSP data loading, population/GDP validation |
 | `test_electricity.py` | 8 | Supply sums, calibration, emissions, LCOE |
-| `test_solver.py` | 6 | Single-period solve, full model run, emissions sanity check |
+| `test_solver.py` | 8 | Single-period solve, full model run, emissions sanity check |
 
 ## Building Documentation
 

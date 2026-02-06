@@ -146,6 +146,43 @@ $$
 
 Weights are normalized so the largest equals 1.0 (GCAM convention), which ensures stable numerical behavior and provides a natural reference point.
 
+### Preference factor logit (MERGE-style)
+
+An alternative logit formulation inspired by MERGE uses **preference factors** to capture non-cost barriers such as regulatory hurdles, infrastructure availability, and social acceptance:
+
+$$
+s_i = \frac{\exp\!\bigl(-k\,(C_i + P_i)\bigr)}{\sum_{j} \exp\!\bigl(-k\,(C_j + P_j)\bigr)}
+$$
+
+where:
+- $C_i$ is the levelized cost of technology $i$ ($/GJ),
+- $P_i$ is the **preference factor** ($/GJ-equivalent penalty or bonus),
+- $k = 0.3$ is the **scale parameter** controlling cost sensitivity.
+
+#### Calibration
+
+Given observed base-year shares $\bar{s}_i$ and costs $\bar{C}_i$, designate a reference technology $r$ with $P_r = 0$. The preference factors for all other technologies are:
+
+$$
+P_i = (C_r - C_i) - \frac{\ln(\bar{s}_i / \bar{s}_r)}{k}
+$$
+
+A positive $P_i$ means technology $i$ faces non-cost barriers relative to the reference; a negative value indicates non-cost advantages.
+
+#### Preference decay
+
+Preference factors decay over time, reflecting the gradual removal of non-cost barriers as technologies mature and infrastructure develops:
+
+$$
+P_i(t) = P_i^{\text{base}} \cdot (1 - d)^{(t - t_0)}
+$$
+
+where $d = 0.02$ is the annual decay rate, giving a half-life of approximately 35 years. As $t \to \infty$, preferences vanish and the model converges toward a **pure-cost outcome**.
+
+> **Note**: Preference factors capture real-world frictions — permitting delays, grid connection queues, consumer habits, fuel supply chain maturity — that are not reflected in LCOE alone. The decay mechanism ensures these barriers erode over long horizons without requiring exogenous scenario assumptions.
+
+**Implementation**: [`ghim/energy/logit.py`](../ghim/energy/logit.py) — functions `preference_logit`, `preference_calibrate`, `preference_decay`.
+
 ### Composite sector cost
 
 The **share-weighted average cost** (also called the logit price) is:
@@ -199,23 +236,77 @@ Energy (E)                    [CES, σ_E = 1.0]
 
 These values are consistent with the empirical literature (Koesler & Schymura, 2015; Van der Werf, 2008) and similar to the WITCH model parameterization.
 
-### Energy demand equation
+### Energy demand equation (endogenous GDP)
 
-In the recursive-dynamic mode, GDP is exogenous (from SSP scenarios). Energy demand is computed as:
+GDP is **endogenous** in Phase 2, following a DICE-style Cobb-Douglas production function with energy cost feedback.
+
+#### Gross output
 
 $$
-E(t) = E_0 \cdot \frac{GDP(t)}{GDP_0} \cdot \left(\frac{P_E(t)}{P_{E,0}}\right)^{-\sigma_{EM}}
+Y(t) = A(t) \cdot K(t)^{\alpha} \cdot L(t)^{1-\alpha}
 $$
 
 where:
-- $E_0$ is base-year energy demand (EJ),
-- $GDP_0$ is base-year GDP,
-- $P_E(t)/P_{E,0}$ is the energy price index relative to the base year,
-- $\sigma_{EM} = 0.5$ is the price elasticity.
+- $A(t)$ is **total factor productivity** (TFP), calibrated from the SSP GDP path (see below),
+- $K(t)$ is physical capital stock (billion USD),
+- $L(t)$ is labor (population, from SSP demographics),
+- $\alpha = 0.3$ is the capital share.
 
-This formulation captures two key drivers:
-1. **Income effect**: Energy demand grows with GDP (elasticity = 1 in the simplified form).
-2. **Price effect**: Higher energy prices reduce demand, with elasticity $-\sigma_{EM}$.
+#### TFP calibration
+
+TFP is back-calculated so that, in the absence of energy price shocks, the model reproduces the SSP GDP trajectory:
+
+$$
+A(t) = \frac{Y_{\text{SSP}}(t)}{K_{\text{SSP}}(t)^{\alpha} \cdot L(t)^{1-\alpha}}
+$$
+
+Once calibrated, $A(t)$ is **fixed** for the scenario run. Deviations from the SSP path arise endogenously through the energy cost feedback described below.
+
+#### Energy demand
+
+$$
+E(t) = E_{\text{base}} \cdot \frac{Y(t)}{Y_{\text{base}}} \cdot \left(\frac{P_E(t)}{P_{E,\text{base}}}\right)^{-\sigma_{EM}}
+$$
+
+where:
+- $E_{\text{base}}$ is base-year energy demand (EJ),
+- $Y(t)$ is **gross output** (not exogenous SSP GDP),
+- $P_E(t)/P_{E,\text{base}}$ is the energy price index relative to the base year,
+- $\sigma_{EM} = 0.5$ is the energy-macro price elasticity.
+
+#### Energy cost and net output
+
+Total energy cost is:
+
+$$
+\text{Cost} = E \;(\text{EJ}) \times P_E \;(\$/\text{GJ})
+$$
+
+expressed in billion USD (the $10^9$ factors in EJ and $/GJ cancel). Net output available for consumption and investment is:
+
+$$
+Y_{\text{net}} = \max\!\bigl(Y - \text{Cost},\; 0.01 \cdot Y\bigr)
+$$
+
+The floor at 1% of gross output prevents negative net output in extreme price scenarios.
+
+#### Investment
+
+$$
+I(t) = \min\!\bigl(s \cdot Y_{\text{net}},\; r_{\text{cap}} \cdot K(t)\bigr)
+$$
+
+where $s = 0.22$ is the savings rate and $r_{\text{cap}} = 0.10$ is a capital growth cap that prevents unrealistically fast accumulation.
+
+#### Feedback mechanism
+
+The energy cost feedback loop is the central macro mechanism in Phase 2:
+
+$$
+\text{Expensive energy} \;\to\; \text{lower } Y_{\text{net}} \;\to\; \text{less investment } I \;\to\; \text{lower } K \;\to\; \text{lower future } Y
+$$
+
+Conversely, cheap energy (e.g., from learning-driven cost reductions in renewables) raises net output and accelerates capital accumulation. Without energy price shocks, the model tracks the SSP GDP path by construction.
 
 ### Capital accumulation
 
@@ -242,7 +333,7 @@ The KLEM driver is calibrated to base-year (2020) data using assumed cost shares
 
 The capital-output ratio $K/Y$ is assumed to be 3.0, consistent with Penn World Table estimates for the global economy.
 
-**Implementation**: [`ghim/econ/klem.py`](../ghim/econ/klem.py) — class `KLEMDriver` with methods `compute_energy_demand`, `update_capital`.
+**Implementation**: [`ghim/econ/klem.py`](../ghim/econ/klem.py) — class `KLEMDriver`.
 
 ---
 
@@ -261,3 +352,86 @@ where:
 The LCOE is expressed in **$/GJ of output**, which is the consistent unit used throughout the model for price-based technology competition.
 
 **Implementation**: [`ghim/energy/technology.py`](../ghim/energy/technology.py) — method `Technology.levelized_cost`.
+
+---
+
+## Stock Turnover
+
+Energy capital stock (power plants, vehicles, industrial equipment) cannot be replaced instantaneously. The **stock turnover** mechanism governs how quickly actual technology shares converge toward the target shares determined by the logit/preference factor model.
+
+The actual share of technology $i$ evolves as:
+
+$$
+S_i^{\text{new}} = S_i^{\text{old}} + \bigl(S_i^{\text{target}} - S_i^{\text{old}}\bigr) \cdot \min\!\left(\frac{\Delta t}{\tau}, \; 1\right)
+$$
+
+where:
+- $S_i^{\text{target}}$ is the share from the logit competition (what the market "wants"),
+- $S_i^{\text{old}}$ is the share at the beginning of the period,
+- $\Delta t$ is the model timestep (5 years),
+- $\tau$ is the **turnover time** (sector-specific capital lifetime).
+
+The $\min(\cdot, 1)$ clamp ensures that shares never overshoot the target. When $\Delta t \ll \tau$, stock adjustment is slow (only a fraction $\Delta t / \tau$ of the gap is closed per period). When $\Delta t \geq \tau$, the stock fully adjusts within one period.
+
+### Turnover times by sector
+
+| Sector | $\tau$ (years) | Interpretation |
+|--------|----------------|----------------|
+| Electricity | 40 | Power plant lifetime |
+| Hydrogen | 25 | H2 production facility |
+| Transport | 15 | Vehicle fleet replacement |
+| Industry | 30 | Industrial equipment |
+| Buildings | 50 | Heating system lifetime |
+| Refining | 40 | Refinery lifetime |
+| Data centers | 7 | Server hardware lifecycle |
+
+**Implementation**: [`ghim/energy/stock.py`](../ghim/energy/stock.py) — function `apply_stock_turnover`.
+
+---
+
+## Learning-by-Doing
+
+Technology costs decline with cumulative deployment following **one-factor experience curves** (WITCH-style). This creates a positive feedback loop: deployment reduces costs, which increases competitiveness, which drives further deployment.
+
+### Experience curve
+
+$$
+C(t) = C_0 \cdot \left(\frac{Q_{\text{cum}}(t)}{Q_0}\right)^{-\lambda}
+$$
+
+where:
+- $C_0$ is the initial unit cost,
+- $Q_{\text{cum}}(t)$ is cumulative installed capacity (or cumulative production) at time $t$,
+- $Q_0$ is the base-year cumulative capacity,
+- $\lambda = \frac{\ln(1 - LR)}{\ln 2}$ is the **learning index**, derived from the learning rate $LR$.
+
+The learning rate $LR$ represents the fractional cost reduction for each doubling of cumulative capacity. For example, $LR = 0.20$ means costs fall by 20% each time cumulative capacity doubles.
+
+### Cost floor
+
+To prevent unrealistically low costs, a floor is imposed:
+
+$$
+C(t) \geq 0.2 \cdot C_0
+$$
+
+Costs cannot fall below 20% of their initial value, reflecting irreducible material and labor costs.
+
+### Learning rates by technology
+
+| Technology | Learning Rate | Meaning |
+|------------|---------------|---------|
+| Solar PV | 20% | 20% cost reduction per capacity doubling |
+| Wind | 12% | |
+| Electrolysis | 15% | |
+| Biomass | 5% | |
+| Nuclear | 3% | |
+| Coal | 0% | Mature technology |
+| Gas | 0% | Mature technology |
+| Hydro | 0% | Mature technology |
+| Oil | 0% | Mature technology |
+| SMR | 0% | Mature technology |
+
+Technologies with $LR = 0\%$ are considered mature — their costs are fixed and do not benefit from further deployment.
+
+**Implementation**: [`ghim/energy/technology.py`](../ghim/energy/technology.py) — method `Technology.update_learning`.

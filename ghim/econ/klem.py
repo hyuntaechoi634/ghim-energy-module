@@ -1,48 +1,45 @@
-"""KLEM macro-economic driver.
+"""DICE-style macroeconomic driver with energy feedback.
 
-Implements a nested CES production function:
+Production function:  Y = A(t) * K(t)^α * L(t)^(1-α)
 
-    Output (Y)
-    +-- Value Added (VA)  [CES, sigma_VA]
-    |   +-- Capital (K)
-    |   +-- Labor (L)
-    +-- Energy-Materials (EM)  [CES, sigma_EM]
-        +-- Energy (E)
-        +-- Materials (M)
+GDP is endogenous: energy costs reduce net output, which reduces
+investment, which lowers capital stock, which lowers future GDP.
 
-GDP from SSP scenarios drives the overall output trajectory.
-Energy demand is derived from the CES nesting, driving the energy sector model.
+TFP trajectory A(t) is calibrated once from the SSP GDP path
+(so Y ≈ Y_SSP without energy shocks), then held fixed.
 """
 
 from __future__ import annotations
 
-import numpy as np
-
 from ghim.config import (
-    SIGMA_VA, SIGMA_EM, SIGMA_E, SIGMA_NE,
-    DEPRECIATION_RATE, TIMESTEP, LABOR_FORCE_PARTICIPATION,
-    BASE_YEAR,
+    SIGMA_EM,
+    CAPITAL_SHARE, SAVINGS_RATE, INVESTMENT_CAP_RATE,
+    DEPRECIATION_RATE, LABOR_FORCE_PARTICIPATION,
+    TIMESTEP, BASE_YEAR, MODEL_YEARS,
 )
-from ghim.econ.ces import ces_demand, ces_price, ces_calibrate
 
 
 class KLEMDriver:
-    """KLEM macro driver for a single region.
+    """DICE-style macro driver for a single region.
 
-    In the recursive-dynamic mode, GDP is exogenous (from SSP).
-    The KLEM structure determines the energy demand consistent
-    with the given GDP and energy prices.
+    Feedback loop:
+        Y = A*K^α*L^(1-α)  →  energy demand  →  energy cost
+        →  net_Y = Y - cost  →  I = s*net_Y  →  K(t+1)
     """
 
     def __init__(
         self,
-        base_gdp: float,           # billion USD PPP
-        base_population: float,     # millions
-        base_energy_demand_ej: float,  # total energy demand (EJ)
-        sigma_va: float = SIGMA_VA,
+        base_gdp: float,               # billion USD PPP
+        base_population: float,         # millions
+        base_energy_demand_ej: float,   # total energy demand (EJ)
+        capital_share: float = CAPITAL_SHARE,
+        savings_rate: float = SAVINGS_RATE,
         sigma_em: float = SIGMA_EM,
     ):
-        self.sigma_va = sigma_va
+        # Parameters
+        self.alpha = capital_share
+        self.savings_rate = savings_rate
+        self.investment_cap_rate = INVESTMENT_CAP_RATE
         self.sigma_em = sigma_em
 
         # Base-year values
@@ -50,70 +47,121 @@ class KLEMDriver:
         self.base_population = base_population
         self.base_energy = base_energy_demand_ej
 
-        # Derive base-year factor allocations (simplified)
-        # Assume: energy cost share ~8% of GDP, materials ~12%, rest is value added
-        self.energy_cost_share = 0.08
-        self.materials_cost_share = 0.12
-        self.va_share = 1.0 - self.energy_cost_share - self.materials_cost_share
-
-        # Capital stock (assume K/Y ratio of ~3)
+        # Capital stock (K/Y ratio ≈ 3)
         self.capital_stock = base_gdp * 3.0
 
-        # Calibrated CES parameters for Y = f(VA, EM)
-        base_em = base_gdp * (self.energy_cost_share + self.materials_cost_share)
-        base_va = base_gdp * self.va_share
-        self.alpha_y = ces_calibrate(
-            np.array([base_va, base_em]),
-            np.array([1.0, 1.0]),  # normalized base prices
-            sigma_em,
-        )
+        # Labor
+        self.labor = base_population * LABOR_FORCE_PARTICIPATION
+
+        # Calibrate base TFP: A = Y / (K^α * L^(1-α))
+        kl = self.capital_stock ** self.alpha * self.labor ** (1.0 - self.alpha)
+        self.tfp = base_gdp / kl if kl > 0 else 1.0
+
+        # TFP trajectory (populated by init_tfp_trajectory)
+        self._tfp_trajectory: dict[int, float] = {BASE_YEAR: self.tfp}
+
+    # ------------------------------------------------------------------
+    # TFP trajectory
+    # ------------------------------------------------------------------
+
+    def init_tfp_trajectory(
+        self,
+        ssp_gdp_by_year: dict[int, float],
+        pop_by_year: dict[int, float],
+    ) -> None:
+        """Pre-compute TFP so that Y_model ≈ Y_SSP without energy shocks.
+
+        Simulates a reference K path (assuming full savings of gross output)
+        and backs out A(t) at each period.
+        """
+        k_ref = self.capital_stock
+        self._tfp_trajectory = {}
+
+        for year in MODEL_YEARS:
+            y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
+            pop = pop_by_year.get(year, self.base_population)
+            labor = pop * LABOR_FORCE_PARTICIPATION
+
+            kl = k_ref ** self.alpha * labor ** (1.0 - self.alpha)
+            a = y_ssp / kl if kl > 0 else self.tfp
+            self._tfp_trajectory[year] = a
+
+            # Evolve reference K (no energy shock)
+            inv_ref = min(
+                self.savings_rate * y_ssp,
+                self.investment_cap_rate * k_ref,
+            )
+            decay = (1.0 - DEPRECIATION_RATE) ** TIMESTEP
+            k_ref = decay * k_ref + inv_ref * TIMESTEP
+
+    def set_tfp_for_year(self, year: int) -> None:
+        """Set current TFP from pre-computed trajectory."""
+        if year in self._tfp_trajectory:
+            self.tfp = self._tfp_trajectory[year]
+
+    # ------------------------------------------------------------------
+    # Production & demand
+    # ------------------------------------------------------------------
+
+    def compute_gross_output(self, population: float) -> float:
+        """Gross output: Y = A * K^α * L^(1-α)."""
+        self.labor = population * LABOR_FORCE_PARTICIPATION
+        return self.tfp * self.capital_stock ** self.alpha * self.labor ** (1.0 - self.alpha)
 
     def compute_energy_demand(
         self,
-        gdp: float,
-        population: float,
-        energy_price: float,
+        gross_output: float,
+        energy_price_index: float,
     ) -> float:
-        """Compute total energy demand (EJ) for a given period.
+        """Energy demand responsive to GDP and prices.
 
-        Uses the CES demand function: energy demand responds to
-        GDP growth and relative energy prices.
+        E = E_base * (Y / Y_base) * (P / P_base)^(-σ)
 
         Parameters
         ----------
-        gdp : float
-            Current-period GDP (billion USD PPP).
-        population : float
-            Current-period population (millions).
-        energy_price : float
-            Composite energy price index ($/GJ, relative to base year).
+        gross_output : float
+            Current gross output (billion USD PPP).
+        energy_price_index : float
+            Composite energy price relative to base year (P/P_base).
 
         Returns
         -------
         float
             Total energy demand in EJ.
         """
-        # Scale energy demand based on GDP growth and price response
-        gdp_ratio = gdp / self.base_gdp if self.base_gdp > 0 else 1.0
+        gdp_ratio = gross_output / self.base_gdp if self.base_gdp > 0 else 1.0
+        price_ratio = max(energy_price_index, 0.01)
+        return self.base_energy * gdp_ratio * price_ratio ** (-self.sigma_em)
 
-        # CES-based demand response:
-        # E = E_base * (GDP/GDP_base) * (P_E/P_E_base)^(-sigma_em)
-        price_ratio = energy_price  # already relative to base = 1.0
-        if price_ratio <= 0:
-            price_ratio = 1.0
+    # ------------------------------------------------------------------
+    # Energy cost & net output
+    # ------------------------------------------------------------------
 
-        energy_demand = (
-            self.base_energy
-            * gdp_ratio
-            * price_ratio ** (-self.sigma_em)
+    @staticmethod
+    def compute_energy_cost(energy_ej: float, avg_price_per_gj: float) -> float:
+        """Energy cost in billion USD.
+
+        1 EJ = 1e9 GJ, so cost = EJ * $/GJ * 1e9 / 1e9 = EJ * $/GJ.
+        """
+        return energy_ej * avg_price_per_gj
+
+    @staticmethod
+    def compute_net_output(gross_output: float, energy_cost: float) -> float:
+        """Net output = gross - energy cost, floored at 1% of gross."""
+        net = gross_output - energy_cost
+        return max(net, 0.01 * gross_output)
+
+    def compute_investment(self, net_output: float) -> float:
+        """Investment = min(s * net_output, cap_rate * K)."""
+        return min(
+            self.savings_rate * net_output,
+            self.investment_cap_rate * self.capital_stock,
         )
-
-        return energy_demand
 
     def update_capital(self, investment: float) -> None:
         """Advance capital stock by one period.
 
-        K(t+1) = (1 - delta)^dt * K(t) + I * dt
+        K(t+dt) = (1 - δ)^dt * K(t) + I * dt
         """
-        decay = (1 - DEPRECIATION_RATE) ** TIMESTEP
+        decay = (1.0 - DEPRECIATION_RATE) ** TIMESTEP
         self.capital_stock = decay * self.capital_stock + investment * TIMESTEP

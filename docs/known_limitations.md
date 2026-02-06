@@ -1,10 +1,10 @@
 # Known Limitations and Future Work
 
-## Current Limitations (Phase 1)
+## Current Limitations
 
 ### Energy demand
 
-- **No autonomous energy efficiency improvement (AEEI)**: Energy demand grows proportionally with GDP (modulated only by the CES price elasticity). Real-world energy intensity has been declining at ~1–2% per year due to technological progress and structural change. Adding an AEEI parameter $\gamma$ would modify the demand equation to:
+- **No autonomous energy efficiency improvement (AEEI)**: Energy demand grows proportionally with GDP (modulated only by the CES price elasticity). Real-world energy intensity has been declining at ~1-2% per year due to technological progress and structural change. Note: income elasticities < 1 partially capture this effect by dampening demand growth relative to GDP growth. Adding an explicit AEEI parameter $\gamma$ would further modify the demand equation to:
 
 $$
 E(t) = E_0 \cdot \frac{GDP(t)}{GDP_0} \cdot (1 - \gamma)^{t - t_0} \cdot \left(\frac{P_E}{P_{E,0}}\right)^{-\sigma}
@@ -12,15 +12,7 @@ $$
 
 ### Technology dynamics
 
-- **No learning curves**: Technology capital costs are fixed over time. In reality, wind and solar costs have declined by 60–90% over the past two decades. A one-factor learning curve would reduce costs with cumulative deployment:
-
-$$
-C(t) = C_0 \cdot \left(\frac{Q_{cum}(t)}{Q_0}\right)^{-\lambda}
-$$
-
-where $\lambda$ is the learning rate parameter.
-
-- **No technology vintaging**: All capacity is treated as homogeneous. In reality, older plants have different cost and efficiency characteristics than new ones. A vintage structure would track capacity by installation year.
+- **No technology vintaging**: All capacity is treated as homogeneous. In reality, older plants have different cost and efficiency characteristics than new ones. A vintage structure would track capacity by installation year. (Stock turnover provides partial inertia but not full vintaging.)
 
 ### Market structure
 
@@ -40,17 +32,22 @@ where $\lambda$ is the learning rate parameter.
 
 - **Approximate energy data**: Base-year energy balance values are approximate, sourced from publicly available summaries rather than licensed IEA or UN energy statistics. This affects the absolute level of emissions and energy quantities (though relative patterns and trends are reasonable).
 
+### Historical data
+
+- **No historical period tracking**: The model covers 2000-2150 but historical periods (2000-2020) currently use SSP scenario data backfilled from the nearest available year, not actual IEA/BP historical energy data. This means historical periods don't reflect real energy transition trajectories.
+
 ## Planned Improvements
 
 ### Phase 2 (near-term)
 
-| Feature | Description |
-|---------|-------------|
-| AEEI | Autonomous efficiency improvement parameter |
-| Learning curves | One-factor experience curves for wind, solar, batteries |
-| Carbon pricing | Exogenous carbon tax applied to fossil fuel costs |
-| Full market clearing | Endogenous primary fuel prices via supply-demand iteration |
-| IEA calibration | Use licensed IEA World Energy Balance for precise base-year data |
+| Feature | Status | Description |
+|---------|--------|-------------|
+| ~~Learning curves~~ | **Done** | WITCH-style experience curves for wind, solar, batteries |
+| ~~Full market clearing~~ | **Partially done** | Endogenous GDP with energy cost feedback, but primary fuels still exogenous |
+| AEEI | Planned | Autonomous efficiency improvement parameter |
+| Carbon pricing | Planned | Exogenous carbon tax applied to fossil fuel costs |
+| IEA calibration | Planned | Use licensed IEA World Energy Balance for precise base-year data |
+| Historical period tracking | Planned | Load actual IEA/CDIAC data for 2000-2020 |
 
 ### Phase 3 (medium-term)
 

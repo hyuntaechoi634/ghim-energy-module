@@ -17,6 +17,13 @@ def results_to_dataframe(results: list[PeriodResult]) -> pd.DataFrame:
             "year": r.year,
             "region": r.region,
             "gdp_billion_usd": r.gdp,
+            "gross_output_billion_usd": r.gross_output,
+            "net_output_billion_usd": r.net_output,
+            "ssp_reference_gdp_billion_usd": r.ssp_reference_gdp,
+            "capital_stock_billion_usd": r.capital_stock,
+            "investment_billion_usd": r.investment,
+            "energy_cost_billion_usd": r.energy_cost,
+            "tfp": r.tfp,
             "population_million": r.population,
             "total_energy_ej": r.total_energy_demand_ej,
             "electricity_price_usd_gj": r.electricity_price,
@@ -49,6 +56,13 @@ def export_csv(results: list[PeriodResult], output_dir: Path) -> None:
     )
     energy.to_csv(output_dir / "energy_by_region.csv")
 
+    # Summary: GDP comparison (endogenous vs SSP reference)
+    gdp_compare = df.pivot_table(
+        values=["gdp_billion_usd", "ssp_reference_gdp_billion_usd"],
+        index="region", columns="year", aggfunc="sum",
+    )
+    gdp_compare.to_csv(output_dir / "gdp_comparison.csv")
+
 
 def print_summary(results: list[PeriodResult]) -> None:
     """Print a quick summary of model results to console."""
@@ -61,18 +75,21 @@ def print_summary(results: list[PeriodResult]) -> None:
         "emissions_mtco2": "sum",
         "total_energy_ej": "sum",
         "gdp_billion_usd": "sum",
+        "gross_output_billion_usd": "sum",
+        "ssp_reference_gdp_billion_usd": "sum",
         "population_million": "sum",
     })
 
     print("Global Totals:")
-    print(f"{'Year':>6} {'CO2 (GtCO2)':>12} {'Energy (EJ)':>12} {'GDP (T$)':>10} {'Pop (B)':>8}")
-    print("-" * 52)
+    print(f"{'Year':>6} {'CO2 (GtCO2)':>12} {'Energy (EJ)':>12} {'GDP (T$)':>10} {'SSP GDP':>10} {'Pop (B)':>8}")
+    print("-" * 62)
     for year, row in global_by_year.iterrows():
         print(
             f"{year:>6} "
             f"{row['emissions_mtco2'] / 1000:>12.1f} "
             f"{row['total_energy_ej']:>12.1f} "
             f"{row['gdp_billion_usd'] / 1000:>10.1f} "
+            f"{row['ssp_reference_gdp_billion_usd'] / 1000:>10.1f} "
             f"{row['population_million'] / 1000:>8.2f}"
         )
 

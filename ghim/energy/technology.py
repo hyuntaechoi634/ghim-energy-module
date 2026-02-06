@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from ghim.config import capital_recovery_factor, HOURS_PER_YEAR, DISCOUNT_RATE
+from ghim.config import (
+    capital_recovery_factor, HOURS_PER_YEAR, DISCOUNT_RATE,
+    LEARNING_RATES, COST_FLOOR_FRACTION,
+)
 
 
 @dataclass
@@ -25,8 +29,24 @@ class Technology:
     om_variable: float       # $/GJ output
     capacity_factor: float   # 0-1, annual average
     lifetime: int            # years
-    share_weight: float = 1.0  # calibrated logit weight
+    share_weight: float = 1.0  # calibrated logit weight (legacy, kept for compat)
     carbon_coef: float = 0.0   # tC/GJ of fuel input
+
+    # Learning-by-doing fields
+    base_capital_cost: float = 0.0      # initial capital cost (frozen at model init)
+    base_cumulative: float = 1.0        # initial cumulative capacity (GW or EJ)
+    cumulative_capacity: float = 0.0    # current cumulative deployed capacity
+    learning_rate: float = 0.0          # 0-1, fraction cost reduction per doubling
+    cost_floor: float = 0.0             # minimum capital cost ($/kW)
+
+    def __post_init__(self):
+        # Initialize learning fields if not set
+        if self.base_capital_cost == 0.0:
+            self.base_capital_cost = self.capital_cost
+        if self.learning_rate == 0.0:
+            self.learning_rate = LEARNING_RATES.get(self.name, 0.0)
+        if self.cost_floor == 0.0:
+            self.cost_floor = self.base_capital_cost * COST_FLOOR_FRACTION
 
     def levelized_cost(self, fuel_price: float, discount_rate: float = DISCOUNT_RATE) -> float:
         """Compute levelized cost of energy in $/GJ output.
@@ -58,6 +78,24 @@ class Technology:
         # carbon_coef is tC/GJ, input_ej * 1e9 = GJ
         return self.carbon_coef * input_ej * 1e9 / 1e6  # MtC
 
+    def update_learning(self, new_capacity: float) -> None:
+        """Update cumulative deployment and reduce capital cost via learning curve.
+
+        Cost(t) = Cost_0 * (Q_cum / Q_0)^(-learn_exp)
+        learn_exp = ln(1 - LR) / ln(2)
+        """
+        if self.learning_rate <= 0 or self.base_cumulative <= 0:
+            return
+        self.cumulative_capacity += new_capacity
+        if self.cumulative_capacity <= self.base_cumulative:
+            return
+        learn_exp = math.log(1.0 - self.learning_rate) / math.log(2.0)
+        ratio = self.cumulative_capacity / self.base_cumulative
+        self.capital_cost = max(
+            self.base_capital_cost * ratio ** learn_exp,
+            self.cost_floor,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Default technology parameters
@@ -70,35 +108,43 @@ def default_electricity_techs() -> list[Technology]:
         Technology("coal", "electricity", "coal",
                    efficiency=0.39, capital_cost=1500, om_fixed=40,
                    om_variable=0.5, capacity_factor=0.75, lifetime=40,
-                   carbon_coef=0.0257),
+                   carbon_coef=0.0257,
+                   base_cumulative=2100.0),  # ~2100 GW global
         Technology("gas_cc", "electricity", "gas",
                    efficiency=0.55, capital_cost=900, om_fixed=12,
                    om_variable=0.3, capacity_factor=0.60, lifetime=30,
-                   carbon_coef=0.0153),
+                   carbon_coef=0.0153,
+                   base_cumulative=1800.0),
         Technology("nuclear", "electricity", "nuclear",
                    efficiency=0.33, capital_cost=5500, om_fixed=100,
                    om_variable=0.5, capacity_factor=0.90, lifetime=60,
-                   carbon_coef=0.0),
+                   carbon_coef=0.0,
+                   base_cumulative=440.0),
         Technology("hydro", "electricity", "hydro",
                    efficiency=1.0, capital_cost=2500, om_fixed=30,
                    om_variable=0.1, capacity_factor=0.45, lifetime=80,
-                   carbon_coef=0.0),
+                   carbon_coef=0.0,
+                   base_cumulative=1300.0),
         Technology("wind", "electricity", "wind",
                    efficiency=1.0, capital_cost=1200, om_fixed=25,
                    om_variable=0.0, capacity_factor=0.35, lifetime=25,
-                   carbon_coef=0.0),
+                   carbon_coef=0.0,
+                   base_cumulative=740.0),   # ~740 GW global 2020
         Technology("solar", "electricity", "solar",
                    efficiency=1.0, capital_cost=900, om_fixed=12,
                    om_variable=0.0, capacity_factor=0.22, lifetime=30,
-                   carbon_coef=0.0),
+                   carbon_coef=0.0,
+                   base_cumulative=710.0),   # ~710 GW global 2020
         Technology("biomass", "electricity", "biomass",
                    efficiency=0.35, capital_cost=2500, om_fixed=50,
                    om_variable=0.5, capacity_factor=0.70, lifetime=30,
-                   carbon_coef=0.0),  # biogenic carbon
+                   carbon_coef=0.0,
+                   base_cumulative=150.0),
         Technology("oil", "electricity", "refined liquids",
                    efficiency=0.37, capital_cost=800, om_fixed=15,
                    om_variable=0.8, capacity_factor=0.30, lifetime=30,
-                   carbon_coef=0.0200),
+                   carbon_coef=0.0200,
+                   base_cumulative=500.0),
     ]
 
 
@@ -118,9 +164,11 @@ def default_hydrogen_techs() -> list[Technology]:
         Technology("smr", "hydrogen", "gas",
                    efficiency=0.72, capital_cost=600, om_fixed=20,
                    om_variable=0.3, capacity_factor=0.90, lifetime=25,
-                   carbon_coef=0.0153),
+                   carbon_coef=0.0153,
+                   base_cumulative=100.0),
         Technology("electrolysis", "hydrogen", "electricity",
                    efficiency=0.70, capital_cost=1000, om_fixed=25,
                    om_variable=0.1, capacity_factor=0.50, lifetime=20,
-                   carbon_coef=0.0),
+                   carbon_coef=0.0,
+                   base_cumulative=1.0),  # very small base → fast learning
     ]

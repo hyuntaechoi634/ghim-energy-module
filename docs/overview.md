@@ -16,10 +16,14 @@ GHIM addresses these issues by providing a **modular, transparent, Python-based*
 
 ## Design Philosophy
 
-GHIM draws inspiration from several established models:
+GHIM draws inspiration from several established models. The core philosophy: **"DICE + energy"** — endogenous GDP with a detailed energy sector.
 
 | Concept | Source | GHIM Implementation |
 |---------|--------|-------------------|
+| Endogenous GDP | DICE/RICE | `ghim.econ.klem` — $Y = A K^\alpha L^{1-\alpha}$ with energy cost feedback |
+| Preference factor logit | MERGE | `ghim.energy.logit` — $\exp(-k(C_i + P_i)) / \Sigma$ with decay |
+| Learning-by-doing | WITCH | `ghim.energy.technology` — experience curves for all technologies |
+| Stock turnover inertia | WITCH, GCAM | `ghim.energy.stock` — sector-specific turnover times |
 | Nested CES production | WITCH, REMIND | `ghim.econ.ces` — KLEM nesting |
 | Logit technology choice | GCAM | `ghim.energy.logit` — relative & absolute cost logit |
 | Recursive-dynamic solving | GCAM, DICE/RICE | `ghim.solver.recursive` — period-by-period |
@@ -29,25 +33,26 @@ The model is intentionally simpler than full IAMs — it focuses on the energy s
 
 ## Scope
 
-### What GHIM models (Phase 1)
+### What GHIM models
 
 - **10 world regions** using the AR6 R10 classification
-- **Macroeconomic driver**: GDP and population from SSP scenarios drive energy demand via KLEM-CES
-- **Electricity generation**: 8 technologies competing via logit (coal, gas CC, nuclear, hydro, wind, solar, biomass, oil)
+- **Endogenous GDP**: DICE-style production function $Y = A K^\alpha L^{1-\alpha}$, with TFP trajectory calibrated from SSP scenarios, and energy cost → net output → investment → capital feedback
+- **Time horizon**: 2000–2150 in 5-year steps (31 periods)
+- **Electricity generation**: 8 technologies competing via preference-factor logit, with stock turnover ($\tau = 40$ yr) and learning curves
 - **Oil refining**: Crude oil → refined liquids transformation
-- **Hydrogen production**: SMR and electrolysis competing via logit
-- **Final energy demand**: Industry, buildings, and transport sectors with fuel switching
+- **Hydrogen production**: SMR and electrolysis competing via preference logit, with stock turnover ($\tau = 25$ yr) and electrolysis learning
+- **Final energy demand**: Industry (heavy/light/data centers), buildings (residential/commercial), and transport (passenger/freight) — nested 2-level logit tree with stock turnover at each level
+- **Technology dynamics**: WITCH-style experience curves — solar (20% learning rate), wind (12%), electrolysis (15%), with cost floor at 20% of initial
 - **CO$_2$ emissions**: From fossil fuel combustion across the supply chain
-- **Time horizon**: 2020–2100 in 5-year steps
 
 ### What GHIM does not yet model
 
-- Technology learning curves (cost reductions over time)
 - Autonomous energy efficiency improvement (AEEI)
 - Carbon pricing or climate policy
 - Climate feedback (temperature → economic damages)
 - Land use, agriculture, or non-CO$_2$ emissions
 - Trade between regions
+- Historical period tracking (2000–2020 periods use SSP data, not IEA actuals)
 
 ## Regional Specification
 
@@ -70,65 +75,73 @@ The mapping file is at `mapping/region_classification.tsv` with columns: `ISO`, 
 
 ## Model Architecture
 
-The following diagram shows how data flows through the model:
+The following diagram shows how data flows through the model. The key feedback loop (DICE-style): energy costs reduce net output, which reduces investment, which lowers future capital stock and GDP.
 
 ```
                           SSP Scenarios
-                      (Population, GDP|PPP)
+                     (Population, GDP|PPP)
                               │
+              TFP calibration │ (A(t) so Y ≈ Y_SSP)
                               ▼
                     ┌─────────────────────┐
-                    │    KLEM Macro Driver │
-                    │  (CES: K, L, E, M)  │
-                    └────────┬────────────┘
-                             │ Energy demand (EJ)
-                             ▼
-              ┌──────────────────────────────┐
-              │      Final Demand Sectors     │
-              │  Industry │ Buildings │ Transport │
-              │  (logit fuel switching)       │
-              └──────┬───────┬───────┬───────┘
-                     │       │       │
-         ┌───────────┘       │       └───────────┐
-         ▼                   ▼                   ▼
-    Electricity         Ref. Liquids         Hydrogen
-    ┌──────────┐       ┌──────────┐       ┌──────────┐
-    │ 8 techs  │       │  Crude → │       │ SMR      │
-    │ (logit)  │       │  Liquids │       │ Electrol.│
-    └────┬─────┘       └────┬─────┘       └────┬─────┘
-         │                  │                   │
-         └────────┬─────────┴───────────────────┘
-                  ▼
-         Primary Energy Resources
-         (coal, gas, oil, nuclear,
-          hydro, wind, solar, biomass)
+                    │  DICE GDP Engine    │
+                    │ Y = A·K^α·L^(1-α)  │──────────────┐
+                    └────────┬────────────┘              │
+                             │ Gross output              │
+                             ▼                           │
+              ┌──────────────────────────────┐           │
+              │      Final Demand Sectors     │           │
+              │  Industry │ Buildings │ Transport │       │
+              │  (nested logit + stock turnover)│        │
+              └──────┬───────┬───────┬───────┘           │
+                     │       │       │                   │
+         ┌───────────┘       │       └───────────┐       │
+         ▼                   ▼                   ▼       │
+    Electricity         Ref. Liquids         Hydrogen    │
+    ┌──────────┐       ┌──────────┐       ┌──────────┐  │
+    │ 8 techs  │       │  Crude → │       │ SMR      │  │
+    │ pref logit│      │  Liquids │       │ Electrol.│  │
+    │ +learning │       └────┬─────┘       │ +learning│  │
+    └────┬─────┘             │             └────┬─────┘  │
+         └───────┬───────────┴──────────────────┘        │
+                 ▼                                       │
+        Energy Cost ($B) ─────────────────────────┐      │
+                                                  ▼      │
+                                           Net Output    │
+                                           = Y - Cost    │
+                                                  │      │
+                                           Investment    │
+                                           I = s·Y_net   │
+                                                  │      │
+                                           K(t+1) ◄──────┘
 ```
 
 ## Code Organization
 
 ```
 ghim/
-├── config.py                 # Time horizon, CES/logit parameters, constants
+├── config.py                 # Time horizon, DICE/CES/logit parameters, learning rates
 ├── regions.py                # AR6 R10 region definitions, ISO→R10 mapping
 ├── data/
-│   ├── ssp.py                # SSP population/GDP loading and R10 aggregation
+│   ├── ssp.py                # SSP population/GDP loading, R10 aggregation, 2150 extrapolation
 │   ├── energy_cal.py         # Base-year energy balance defaults
 │   └── loader.py             # CSV reading utilities
 ├── econ/
 │   ├── ces.py                # CES production function (output, price, demand, calibrate)
-│   └── klem.py               # KLEM macro driver (energy demand from GDP)
+│   └── klem.py               # DICE-style macro driver (Y=AK^αL^(1-α), endogenous GDP)
 ├── energy/
-│   ├── logit.py              # Logit discrete choice (relative, absolute, calibrate)
-│   ├── technology.py         # Technology dataclass and default parameters
-│   ├── electricity.py        # Electricity sector (8-tech logit competition)
+│   ├── logit.py              # Logit: relative, absolute, preference-factor, calibrate
+│   ├── stock.py              # Stock turnover (gradual technology transition)
+│   ├── technology.py         # Technology dataclass with learning curves
+│   ├── electricity.py        # Electricity sector (pref logit + stock + learning)
 │   ├── refining.py           # Oil refining sector
-│   ├── hydrogen.py           # Hydrogen production (SMR + electrolysis)
-│   ├── demand.py             # Final demand by sector with fuel switching
+│   ├── hydrogen.py           # Hydrogen production (pref logit + stock + learning)
+│   ├── demand.py             # Nested demand tree (DemandNode/DemandLeaf)
 │   └── supply.py             # Primary resource supply curves
 ├── solver/
-│   └── recursive.py          # Period-by-period solver with market clearing
+│   └── recursive.py          # Period-by-period solver with endogenous GDP feedback
 ├── output/
-│   └── reporting.py          # Results export (CSV, summary tables)
+│   └── reporting.py          # Results export (CSV, summary tables, GDP comparison)
 ├── run.py                    # CLI entry point
-└── tests/                    # 38 unit tests
+└── tests/                    # 40 unit tests
 ```

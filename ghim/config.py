@@ -15,10 +15,13 @@ GCAMDATA_EXT = REPO_ROOT / "input" / "gcamdata" / "inst" / "extdata"
 # ---------------------------------------------------------------------------
 # Time horizon
 # ---------------------------------------------------------------------------
+HISTORY_START: int = 2000
 BASE_YEAR: int = 2020
-END_YEAR: int = 2100
+END_YEAR: int = 2150
 TIMESTEP: int = 5  # years
-MODEL_YEARS: list[int] = list(range(BASE_YEAR, END_YEAR + 1, TIMESTEP))
+HISTORICAL_YEARS: list[int] = list(range(HISTORY_START, BASE_YEAR + 1, TIMESTEP))
+FUTURE_YEARS: list[int] = list(range(BASE_YEAR + TIMESTEP, END_YEAR + 1, TIMESTEP))
+MODEL_YEARS: list[int] = HISTORICAL_YEARS + FUTURE_YEARS
 NUM_PERIODS: int = len(MODEL_YEARS)
 
 # ---------------------------------------------------------------------------
@@ -27,6 +30,11 @@ NUM_PERIODS: int = len(MODEL_YEARS)
 DISCOUNT_RATE: float = 0.05
 DEPRECIATION_RATE: float = 0.05  # annual capital depreciation
 LABOR_FORCE_PARTICIPATION: float = 0.65  # fraction of population as labor
+
+# DICE-style endogenous GDP
+CAPITAL_SHARE: float = 0.3          # alpha in K^alpha * L^(1-alpha)
+SAVINGS_RATE: float = 0.22          # fraction of net output saved
+INVESTMENT_CAP_RATE: float = 0.10   # max annual investment as fraction of K
 
 # ---------------------------------------------------------------------------
 # CES elasticities (KLEM nesting, WITCH-inspired defaults)
@@ -44,6 +52,50 @@ ELEC_LOGIT_EXP: float = -4.0     # electricity sector
 REFINING_LOGIT_EXP: float = -6.0
 HYDROGEN_LOGIT_EXP: float = -3.0
 DEMAND_LOGIT_EXP: float = -3.0   # fuel switching in final demand
+
+# ---------------------------------------------------------------------------
+# Preference factor parameters (MERGE-style logit)
+# Share_i = exp(-k * (Cost_i + Pref_i)) / sum(exp(-k * (Cost_j + Pref_j)))
+# ---------------------------------------------------------------------------
+PREF_LOGIT_SCALE: float = 0.3       # k: sensitivity to cost ($/GJ)^-1
+PREF_DECAY_RATE: float = 0.02       # annual decay rate for preference factors
+# (1-0.02)^5 = 0.904 → ~10% decay per 5-year period; halve in ~35 years
+
+# ---------------------------------------------------------------------------
+# Stock turnover times (years)
+# ---------------------------------------------------------------------------
+TURNOVER_TIMES: dict[str, float] = {
+    "electricity": 40.0,    # Power plants
+    "hydrogen": 25.0,       # H2 plants
+    "transport": 15.0,      # Vehicle fleet
+    "industry": 30.0,       # Boilers/furnaces
+    "buildings": 50.0,      # Heating systems
+    "refining": 40.0,       # Refineries
+    "data_centers": 7.0,    # Server hardware lifecycle
+}
+
+# ---------------------------------------------------------------------------
+# Learning-by-doing (WITCH-style experience curves)
+# Cost(t) = Cost_0 * (Q_cum(t) / Q_0)^(-learn_exp)
+# learn_exp = ln(1 - LR) / ln(2), where LR = learning rate
+# ---------------------------------------------------------------------------
+LEARNING_RATES: dict[str, float] = {
+    # Electricity
+    "solar": 0.20,          # 20% cost reduction per capacity doubling
+    "wind": 0.12,           # 12%
+    "biomass": 0.05,        # 5%
+    "nuclear": 0.03,        # 3% (slow learning)
+    "coal": 0.0,
+    "gas": 0.0,
+    "hydro": 0.0,
+    "oil": 0.0,
+    # Hydrogen
+    "electrolysis": 0.15,   # 15% (scaling technology)
+    "smr": 0.0,
+    # Refining
+    "oil_refining": 0.0,
+}
+COST_FLOOR_FRACTION: float = 0.2  # costs can't fall below 20% of initial
 
 # ---------------------------------------------------------------------------
 # Solver

@@ -67,7 +67,19 @@ RUS → Eurasia
 
 Population and GDP are **summed** across all countries within each R10 region. The result is two DataFrames with:
 - **Index**: 10 R10 region names
-- **Columns**: Model years (2020, 2025, ..., 2100)
+- **Columns**: Model years (2000, 2005, ..., 2150)
+
+### Step 4: Time horizon extension
+
+The SSP database provides projections to 2100. For years beyond 2100 (2105, 2110, ..., 2150), GHIM **extrapolates** using the trailing compound annual growth rate from the 2090–2100 interval:
+
+$$
+X(t) = X(t-\Delta t) \cdot g^{\Delta t}, \quad g = \left(\frac{X(2100)}{X(2090)}\right)^{1/10}
+$$
+
+This extrapolation is applied per-region independently for both population and GDP. For historical years (2000–2015) that may not be in the SSP database, the nearest available year is used as a backfill.
+
+**Implementation**: `ghim/data/ssp.py` — function `_extrapolate_beyond()`.
 
 ## Base-year validation
 

@@ -88,26 +88,33 @@ def absolute_cost_logit(
 
 def logit_shares(
     costs: np.ndarray,
-    share_weights: np.ndarray,
-    logit_exp: float,
+    share_weights: np.ndarray = None,
+    logit_exp: float = None,
     mode: str = "relative",
     base_value: float = 1.0,
+    pref_factors: np.ndarray = None,
+    scale_k: float = None,
 ) -> np.ndarray:
     """Unified interface for logit share computation.
 
     Parameters
     ----------
-    costs, share_weights, logit_exp : see above
-    mode : {"relative", "absolute"}
-    base_value : float
-        Only used when mode="absolute".
+    costs : array of shape (n,)
+    share_weights : array (required for relative/absolute modes)
+    logit_exp : float (required for relative/absolute modes)
+    mode : {"relative", "absolute", "preference"}
+    base_value : float (absolute mode only)
+    pref_factors : array (preference mode only)
+    scale_k : float (preference mode only)
 
     Returns
     -------
     ndarray of shape (n,)
         Market shares.
     """
-    if mode == "relative":
+    if mode == "preference":
+        return preference_logit(costs, pref_factors, scale_k)
+    elif mode == "relative":
         return relative_cost_logit(costs, share_weights, logit_exp)
     elif mode == "absolute":
         return absolute_cost_logit(costs, share_weights, logit_exp, base_value)
@@ -159,6 +166,100 @@ def logit_calibrate(
 
     # Normalize so the largest weight = 1 (GCAM convention)
     return raw / raw.max()
+
+
+# ---------------------------------------------------------------------------
+# MERGE-style preference factor logit
+# ---------------------------------------------------------------------------
+
+def preference_logit(
+    costs: np.ndarray,
+    pref_factors: np.ndarray,
+    scale_k: float,
+) -> np.ndarray:
+    """Compute market shares using MERGE-style preference factor logit.
+
+    Share_i = exp(-k * (Cost_i + Pref_i)) / sum_j exp(-k * (Cost_j + Pref_j))
+
+    Parameters
+    ----------
+    costs : array of shape (n,)
+        Levelized cost of each option ($/GJ).
+    pref_factors : array of shape (n,)
+        Preference adder for each option ($/GJ equivalent).
+        Positive = penalty (disliked), negative = bonus (preferred).
+    scale_k : float
+        Sensitivity parameter k > 0.  Larger k = more cost-sensitive.
+
+    Returns
+    -------
+    ndarray of shape (n,)
+        Market shares (sum to 1).
+    """
+    costs = np.asarray(costs, dtype=float)
+    pref_factors = np.asarray(pref_factors, dtype=float)
+
+    log_unnorm = -scale_k * (costs + pref_factors)
+    log_unnorm -= log_unnorm.max()  # numerical stability
+    unnorm = np.exp(log_unnorm)
+    return unnorm / unnorm.sum()
+
+
+def preference_calibrate(
+    base_shares: np.ndarray,
+    base_costs: np.ndarray,
+    scale_k: float,
+) -> np.ndarray:
+    """Calibrate preference factors from base-year shares (inverse logit).
+
+    From Share_i = exp(-k*(C_i + Pref_i)) / Z, pick reference tech r
+    (largest share) and set Pref_r = 0.  Then:
+
+        ln(S_i / S_r) = -k * ((C_i + Pref_i) - (C_r + 0))
+        Pref_i = (C_r - C_i) - ln(S_i / S_r) / k
+
+    Parameters
+    ----------
+    base_shares : array of shape (n,)
+        Observed market shares (must sum to 1, all > 0).
+    base_costs : array of shape (n,)
+        Observed costs in base year.
+    scale_k : float
+        Sensitivity parameter k > 0.
+
+    Returns
+    -------
+    ndarray of shape (n,)
+        Calibrated preference factors ($/GJ equivalent).
+        Reference technology has Pref = 0.
+    """
+    base_shares = np.asarray(base_shares, dtype=float)
+    base_costs = np.asarray(base_costs, dtype=float)
+
+    # Ensure positive shares for log
+    base_shares = np.maximum(base_shares, 1e-10)
+    base_shares = base_shares / base_shares.sum()
+
+    ref = int(np.argmax(base_shares))
+    log_ratio = np.log(base_shares / base_shares[ref])
+    pref = (base_costs[ref] - base_costs) - log_ratio / scale_k
+    pref -= pref[ref]  # ensure reference = 0
+    return pref
+
+
+def preference_decay(
+    pref_factors: np.ndarray,
+    years_elapsed: int,
+    decay_rate: float,
+) -> np.ndarray:
+    """Decay preference factors toward zero over time.
+
+    Pref_i(t) = Pref_i(base) * (1 - decay_rate)^years_elapsed
+
+    As preferences decay, pure cost competition dominates.
+    """
+    factor = (1.0 - decay_rate) ** years_elapsed
+    return np.asarray(pref_factors, dtype=float) * factor
 
 
 def logit_average_cost(

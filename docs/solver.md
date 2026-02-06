@@ -8,37 +8,56 @@ This approach is computationally simpler and does not require agents to have per
 
 ## Algorithm
 
-For each period $t$ (2020, 2025, ..., 2100) and each region $r$:
+For each period $t$ (2000, 2005, ..., 2150) and each region $r$:
 
-### Step 1: Read drivers
+### Step 1: Read drivers and initialize TFP
 
-Retrieve exogenous population $Pop(r, t)$ and GDP $Y(r, t)$ from the SSP scenario data.
+Retrieve exogenous population $Pop(r, t)$ and GDP $Y^{SSP}(r, t)$ from the SSP scenario data.
+
+At model initialization (before the first period), call `init_tfp_trajectory()` to back out a total factor productivity (TFP) path $A(r, t)$ such that the Cobb-Douglas production function reproduces the SSP GDP trajectory in the absence of energy shocks:
+
+$$Y^{SSP}(r, t) = A(r, t) \cdot K(r, t)^\alpha \cdot L(r, t)^{1-\alpha}$$
+
+This TFP trajectory is computed once and held fixed for the entire simulation. The actual model GDP (net of energy costs) will deviate from the SSP path as endogenous energy dynamics take effect.
 
 ### Step 2: Price iteration (market clearing)
 
 The model iterates on energy prices until supply costs converge. The iteration loop:
 
 ```
-Initialize: prices = {carrier → $/GJ} from previous period
+Initialize: prices = {carrier -> $/GJ} from previous period
 
 For iteration = 1, 2, ..., max_iter:
     1. Compute energy price index (relative to base year)
-    2. KLEM: total energy demand E(t) from GDP and price index
-    3. Final demand: allocate E(t) across sectors and carriers via logit
-    4. Electricity: compute generation mix and supply cost
-    5. Refining: compute refined liquids cost
-    6. Hydrogen: compute production mix and supply cost
-    7. Update prices with damping:
-       p_new = p_old + λ · (p_supply - p_old)
-    8. Check convergence: max|Δp/p| < tolerance
+    2. Set TFP from pre-computed trajectory: A = A(r, t)
+    3. Gross output from capital stock: Y = A * K^alpha * L^(1-alpha)
+    4. KLEM: total energy demand E(t) from gross_output and price index
+    5. Final demand: allocate E(t) across sectors and carriers via
+       nested logit tree with preference factors and stock turnover
+    6. Electricity: compute generation mix and supply cost
+    7. Refining: compute refined liquids cost
+    8. Hydrogen: compute production mix and supply cost
+    9. Update prices with damping:
+       p_new = p_old + lambda * (p_supply - p_old)
+   10. Check convergence: max|dp/p| < tolerance
+
+After price convergence:
+    11. Compute energy cost from equilibrium quantities and prices
+    12. Net output: Y_net = Y_gross - energy_cost
+    13. Investment: I = s * Y_net  (savings rate from scenario)
+    14. Capital update: K(t+dt) = (1-delta)^dt * K(t) + I * dt
 ```
+
+Note that gross output is fully endogenous -- it depends on the capital stock $K$ accumulated from prior periods, not on the exogenous SSP GDP. The SSP GDP path is used only to initialize the TFP trajectory.
 
 ### Step 3: Post-solution
 
-After convergence:
+After convergence and the capital update:
 - Compute CO$_2$ emissions from all combustion sources
+- Apply preference factor decay for the next period (base-year values are frozen at calibration; decay shifts shares over time)
+- Update learning curves: cumulative capacity drives cost reductions for eligible technologies
 - Record the `PeriodResult` for this region and period
-- Use updated prices and state as initial conditions for the next period
+- Use updated prices, capital stock, preference factors, stock shares, and cumulative capacity as initial conditions for the next period
 
 ## Convergence Parameters
 
@@ -60,7 +79,7 @@ The model clears three secondary energy markets in each period:
 | Refined liquids | Refining LCOE (includes crude oil cost) | Transport and industrial demand |
 | Hydrogen | Logit-weighted H$_2$ production cost | Industrial and transport demand |
 
-Primary fuel markets (coal, gas, oil) use **exogenous prices** in Phase 1 — they respond to resource depletion through the grade-based supply curves but do not iterate to market clearing. This is a simplification; full market clearing for primary fuels is planned for Phase 2.
+Primary fuel markets (coal, gas, oil) use **exogenous prices** in Phase 1 -- they respond to resource depletion through the grade-based supply curves but do not iterate to market clearing. This is a simplification; full market clearing for primary fuels is planned for a future phase.
 
 ## Period linkage
 
@@ -69,12 +88,15 @@ Information that carries forward between periods:
 | State variable | Mechanism |
 |---------------|-----------|
 | Fuel prices | Previous-period equilibrium prices serve as initial guess |
-| Share weights | Calibrated logit weights persist (no learning curves yet) |
-| Capital stock | Updated via $K(t+\Delta t) = (1-\delta)^{\Delta t} K(t) + I \cdot \Delta t$ |
+| Capital stock $K$ | Updated via $K(t+\Delta t) = (1-\delta)^{\Delta t} K(t) + I \cdot \Delta t$ |
+| Preference factors | Base-year values frozen at calibration; decay applied each period to shift technology shares |
+| Stock shares | Current shares persist via stock turnover (gradual fleet replacement) |
+| Cumulative capacity | Tracks installed capacity for learning curve cost reductions |
+| TFP trajectory | Fixed at initialization via `init_tfp_trajectory()`; not re-calibrated during the run |
 | Resource depletion | Cumulative extraction updated for fossil fuels |
 
 ## Computational performance
 
-The model solves 10 regions $\times$ 17 periods = 170 region-period combinations. Each typically converges in 3–10 price iterations. Total wall time is approximately **5 seconds** on a modern laptop (Python 3.11, no parallelization).
+The model solves 10 regions $\times$ 31 periods = 310 region-period combinations. Each typically converges in 3--10 price iterations. Total wall time is approximately **5--10 seconds** on a modern laptop (Python 3.11, no parallelization).
 
-**Implementation**: [`ghim/solver/recursive.py`](../ghim/solver/recursive.py) — functions `solve_period`, `run_model`, dataclasses `PeriodResult`, `RegionModel`.
+**Implementation**: [`ghim/solver/recursive.py`](../ghim/solver/recursive.py) -- functions `solve_period`, `run_model`, dataclasses `PeriodResult`, `RegionModel`.

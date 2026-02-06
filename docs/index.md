@@ -1,8 +1,8 @@
 # GHIM Energy Module
 
-**GHIM** (Global Hybrid Integrated Model) is a recursive-dynamic energy system model that projects energy supply, demand, and CO$_2$ emissions for 10 world regions from 2020 to 2100 at 5-year intervals.
+**GHIM** (Global Hybrid Integrated Model) is a recursive-dynamic energy system model that projects energy supply, demand, and CO$_2$ emissions for 10 world regions from 2000 to 2150 at 5-year intervals.
 
-The model combines a **KLEM nested CES production function** for macroeconomic energy demand with **logit-based discrete choice** for technology competition across the energy supply chain. It is designed as a modular, transparent alternative to large-scale integrated assessment models (IAMs), implemented entirely in Python.
+The model combines a **DICE-style endogenous GDP** engine ($Y = AK^\alpha L^{1-\alpha}$ with energy cost feedback), **MERGE-style preference factor logit** for technology competition, **WITCH-style learning curves** for cost dynamics, and a **nested CES production function** for macroeconomic energy demand. It is designed as a modular, transparent alternative to large-scale integrated assessment models (IAMs), implemented entirely in Python.
 
 ---
 
@@ -20,16 +20,21 @@ solver
 
 ```{toctree}
 :maxdepth: 2
-:caption: Data & Usage
+:caption: Data & Configuration
 
 data_pipeline
-usage
+regions
+scenarios
+technology_assumptions
+calibration
 ```
 
 ```{toctree}
 :maxdepth: 2
 :caption: Reference
 
+usage
 api_reference
+validation
 known_limitations
 ```

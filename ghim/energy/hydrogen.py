@@ -88,11 +88,23 @@ class HydrogenSector:
         fuel_prices: dict[str, float],
         demand_ej: float,
         years_from_base: int = 0,
+        cost_adjustments: dict[str, float] | None = None,
+        share_constraints: list | None = None,
+        year: int | None = None,
     ) -> dict[str, float]:
         """Compute hydrogen production by technology.
 
         Uses preference logit for target shares, then applies stock
         turnover to blend with existing fleet.
+
+        Parameters
+        ----------
+        cost_adjustments : dict, optional
+            Tech name -> $/GJ subsidy to subtract from costs.
+        share_constraints : list, optional
+            TechConstraint objects for min/max share bounds.
+        year : int, optional
+            Current model year (needed for share constraints).
 
         Returns dict of technology name -> output EJ.
         """
@@ -100,6 +112,13 @@ class HydrogenSector:
             t.levelized_cost(fuel_prices.get(t.fuel_input, 3.0))
             for t in self.techs
         ])
+
+        # Apply cost adjustments (subsidies reduce costs)
+        if cost_adjustments:
+            for i, t in enumerate(self.techs):
+                adj = cost_adjustments.get(t.name, 0.0)
+                if adj > 0:
+                    costs[i] = max(costs[i] - adj, 0.01)
 
         # Compute target shares from preference logit
         if self.pref_factors is not None:
@@ -117,6 +136,15 @@ class HydrogenSector:
         else:
             effective_shares = target_shares
             self.current_shares = target_shares.copy()
+
+        # Apply share constraints (min/max bounds)
+        if share_constraints and year is not None:
+            from ghim.policy import apply_share_constraints
+            effective_shares = apply_share_constraints(
+                effective_shares, self.tech_names, share_constraints,
+                year, "hydrogen",
+            )
+            self.current_shares = effective_shares
 
         self.total_output_ej = demand_ej
         prod_by_tech = {

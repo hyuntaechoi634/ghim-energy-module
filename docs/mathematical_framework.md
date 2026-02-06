@@ -435,3 +435,71 @@ Costs cannot fall below 20% of their initial value, reflecting irreducible mater
 Technologies with $LR = 0\%$ are considered mature — their costs are fixed and do not benefit from further deployment.
 
 **Implementation**: [`ghim/energy/technology.py`](../ghim/energy/technology.py) — method `Technology.update_learning`.
+
+---
+
+## Policy Variables
+
+Policy instruments modify the model's cost structure, demand, and emissions constraints. All policies default to zero (no-op). See [Policy Variables](policy.md) for usage details.
+
+### Carbon price
+
+A carbon price $\tau$ ($/tCO$_2$) adds a cost to fossil fuel prices proportional to their carbon content:
+
+$$
+p'_f = p_f + c_f \cdot \frac{44}{12} \cdot \tau
+$$
+
+where $c_f$ is the carbon coefficient (tC/GJ) and $\frac{44}{12}$ converts tonnes of carbon to tonnes of CO$_2$. This propagates through the LCOE calculation automatically — less efficient technologies pay more per unit output since $\text{LCOE} \propto p_{fuel} / \eta$.
+
+### Autonomous energy efficiency improvement (AEEI)
+
+A cumulative demand reduction factor applied at the solver level:
+
+$$
+E'(t) = E(t) \cdot (1 - r)^{(t - t_0)}
+$$
+
+where $r$ is the annual improvement rate (interpolated from a trajectory). This can be applied globally and/or per-sector, with sector-specific rates overriding the global default.
+
+### Renewable subsidies
+
+Technology-specific cost reductions subtracted from the levelized cost before logit competition:
+
+$$
+\text{LCOE}'_i = \max(\text{LCOE}_i - s_i(t), \; 0.01)
+$$
+
+where $s_i(t)$ is the interpolated subsidy for technology $i$ at year $t$.
+
+### Technology share constraints
+
+After the preference logit and stock turnover compute unconstrained shares $\{S_i\}$, min/max bounds are enforced via iterative clamping:
+
+1. For each technology $i$ with a max bound: if $S_i > \bar{S}_i$, set $S_i = \bar{S}_i$ and redistribute excess proportionally
+2. For each technology $i$ with a min bound: if $S_i < \underline{S}_i$, set $S_i = \underline{S}_i$ and reduce others proportionally
+3. Renormalize so $\sum_i S_i = 1$
+
+### Revenue recycling
+
+A fraction $f$ of carbon tax revenue is recycled to offset energy costs:
+
+$$
+R = \tau \cdot E_{\text{CO}_2} \cdot f / 1000
+$$
+
+$$
+\text{Energy cost}' = \max(\text{Energy cost} - R, \; 0)
+$$
+
+### Emissions cap (shadow pricing)
+
+When a global emissions cap $\bar{E}$ (MtCO$_2$) is specified, the model uses bisection to find the shadow carbon price $\tau^*$ such that:
+
+$$
+\sum_{r} E_r(\tau^*) \approx \bar{E}
+$$
+
+within a 2% tolerance. This is equivalent to a cap-and-trade system where the carbon price equilibrates supply and demand for emissions permits.
+
+**Implementation**: [`ghim/policy.py`](../ghim/policy.py) — all dataclasses and constraint logic.

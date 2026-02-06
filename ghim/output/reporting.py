@@ -29,6 +29,9 @@ def results_to_dataframe(results: list[PeriodResult]) -> pd.DataFrame:
             "electricity_price_usd_gj": r.electricity_price,
             "refined_liquids_ej": r.refined_liquids_ej,
             "emissions_mtco2": r.emissions_mtco2,
+            "carbon_price_usd_tco2": r.carbon_price_usd_tco2,
+            "carbon_revenue_billion_usd": r.carbon_revenue_billion_usd,
+            "aeei_factor": r.aeei_factor,
         }
         # Electricity generation by tech
         for tech, ej in r.electricity_gen_ej.items():

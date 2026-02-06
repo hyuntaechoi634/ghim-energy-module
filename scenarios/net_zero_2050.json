@@ -1,0 +1,35 @@
+{
+  "name": "net_zero_2050",
+  "carbon_price": {
+    "trajectory": {"2025": 30, "2030": 80, "2050": 300}
+  },
+  "renewable_subsidies": {
+    "subsidies": {
+      "solar": {"2025": 2.0, "2040": 0.5, "2050": 0.0},
+      "wind": {"2025": 1.5, "2040": 0.0}
+    }
+  },
+  "efficiency_standards": {
+    "rates": {
+      "global": {"2025": 0.01, "2050": 0.02}
+    }
+  },
+  "emissions_cap": {
+    "caps": {"global": {"2030": 35000, "2050": 5000, "2060": 0}}
+  },
+  "tech_constraints": [
+    {
+      "sector": "electricity",
+      "technology": "coal",
+      "constraint_type": "max",
+      "trajectory": {"2030": 0.30, "2050": 0.0}
+    },
+    {
+      "sector": "electricity",
+      "technology": "solar",
+      "constraint_type": "min",
+      "trajectory": {"2030": 0.15, "2050": 0.30}
+    }
+  ],
+  "revenue_recycling": {"fraction": 0.5}
+}

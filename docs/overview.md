@@ -28,6 +28,7 @@ GHIM draws inspiration from several established models. The core philosophy: **"
 | Logit technology choice | GCAM | `ghim.energy.logit` — relative & absolute cost logit |
 | Recursive-dynamic solving | GCAM, DICE/RICE | `ghim.solver.recursive` — period-by-period |
 | Energy supply chain | WITCH, GCAM | Primary → Transformation → Final demand |
+| Carbon pricing & policy | GCAM, DICE | `ghim.policy` — carbon tax, subsidies, caps, tech constraints |
 
 The model is intentionally simpler than full IAMs — it focuses on the energy sector without land use, water, or detailed climate feedback. This makes it suitable as a research and teaching tool, and as a platform for testing new modeling approaches before incorporating them into larger frameworks.
 
@@ -44,11 +45,10 @@ The model is intentionally simpler than full IAMs — it focuses on the energy s
 - **Final energy demand**: Industry (heavy/light/data centers), buildings (residential/commercial), and transport (passenger/freight) — nested 2-level logit tree with stock turnover at each level
 - **Technology dynamics**: WITCH-style experience curves — solar (20% learning rate), wind (12%), electrolysis (15%), with cost floor at 20% of initial
 - **CO$_2$ emissions**: From fossil fuel combustion across the supply chain
+- **Policy variables**: Carbon pricing, renewable subsidies, efficiency standards, emissions caps, technology constraints, and revenue recycling (see [Policy Variables](policy.md))
 
 ### What GHIM does not yet model
 
-- Autonomous energy efficiency improvement (AEEI)
-- Carbon pricing or climate policy
 - Climate feedback (temperature → economic damages)
 - Land use, agriculture, or non-CO$_2$ emissions
 - Trade between regions
@@ -122,6 +122,7 @@ The following diagram shows how data flows through the model. The key feedback l
 ghim/
 ├── config.py                 # Time horizon, DICE/CES/logit parameters, learning rates
 ├── regions.py                # AR6 R10 region definitions, ISO→R10 mapping
+├── policy.py                 # Policy dataclasses, JSON loading, share constraints
 ├── data/
 │   ├── ssp.py                # SSP population/GDP loading, R10 aggregation, 2150 extrapolation
 │   ├── energy_cal.py         # Base-year energy balance defaults
@@ -143,5 +144,7 @@ ghim/
 ├── output/
 │   └── reporting.py          # Results export (CSV, summary tables, GDP comparison)
 ├── run.py                    # CLI entry point
-└── tests/                    # 40 unit tests
+├── tests/                    # 76 unit tests
+└── ...
+scenarios/                    # Example policy scenario JSON files
 ```

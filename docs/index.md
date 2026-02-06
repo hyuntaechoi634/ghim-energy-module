@@ -27,6 +27,7 @@ regions
 scenarios
 technology_assumptions
 calibration
+policy
 ```
 
 ```{toctree}

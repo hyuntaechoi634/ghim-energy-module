@@ -27,25 +27,41 @@ The model iterates on energy prices until supply costs converge. The iteration l
 ```
 Initialize: prices = {carrier -> $/GJ} from previous period
 
+[POLICY] Add carbon price to fossil fuel prices:
+    p_f += carbon_coef_f * (44/12) * carbon_price
+
+[POLICY] Prepare subsidy dicts and tech constraint lists
+
+[POLICY] Compute AEEI cumulative factor
+
+1. Set TFP from pre-computed trajectory: A = A(r, t)
+2. Gross output from capital stock: Y = A * K^alpha * L^(1-alpha)
+
 For iteration = 1, 2, ..., max_iter:
-    1. Compute energy price index (relative to base year)
-    2. Set TFP from pre-computed trajectory: A = A(r, t)
-    3. Gross output from capital stock: Y = A * K^alpha * L^(1-alpha)
+    3. Compute energy price index (relative to base year)
     4. KLEM: total energy demand E(t) from gross_output and price index
+       [POLICY] E(t) *= AEEI_factor (global efficiency)
     5. Final demand: allocate E(t) across sectors and carriers via
        nested logit tree with preference factors and stock turnover
+       [POLICY] Per-sector demand *= sector AEEI factor
     6. Electricity: compute generation mix and supply cost
+       [POLICY] Subtract subsidies from tech costs
+       [POLICY] Apply min/max share constraints after stock turnover
     7. Refining: compute refined liquids cost
     8. Hydrogen: compute production mix and supply cost
+       [POLICY] Subtract subsidies from tech costs
+       [POLICY] Apply min/max share constraints after stock turnover
     9. Update prices with damping:
        p_new = p_old + lambda * (p_supply - p_old)
    10. Check convergence: max|dp/p| < tolerance
 
 After price convergence:
     11. Compute energy cost from equilibrium quantities and prices
-    12. Net output: Y_net = Y_gross - energy_cost
-    13. Investment: I = s * Y_net  (savings rate from scenario)
-    14. Capital update: K(t+dt) = (1-delta)^dt * K(t) + I * dt
+    12. Compute emissions
+    [POLICY] Revenue recycling: energy_cost -= carbon_price * emissions * fraction
+    13. Net output: Y_net = Y_gross - energy_cost
+    14. Investment: I = s * Y_net
+    15. Capital update: K(t+dt) = (1-delta)^dt * K(t) + I * dt
 ```
 
 Note that gross output is fully endogenous -- it depends on the capital stock $K$ accumulated from prior periods, not on the exogenous SSP GDP. The SSP GDP path is used only to initialize the TFP trajectory.
@@ -56,8 +72,20 @@ After convergence and the capital update:
 - Compute CO$_2$ emissions from all combustion sources
 - Apply preference factor decay for the next period (base-year values are frozen at calibration; decay shifts shares over time)
 - Update learning curves: cumulative capacity drives cost reductions for eligible technologies
-- Record the `PeriodResult` for this region and period
+- Record the `PeriodResult` for this region and period (including policy fields: `carbon_price_usd_tco2`, `carbon_revenue_billion_usd`, `aeei_factor`)
 - Use updated prices, capital stock, preference factors, stock shares, and cumulative capacity as initial conditions for the next period
+
+### Step 4: Emissions cap bisection (optional)
+
+When an emissions cap is active for a given year, `run_model()` wraps the year's solve with a bisection search:
+
+1. Save region model states via `copy.deepcopy`
+2. Bisect on a shadow carbon price $\tau \in [0, 2000]$ $/tCO$_2$
+3. At each trial: solve all 10 regions, sum global emissions
+4. Compare to cap: if within 2% tolerance, accept; otherwise narrow the search interval
+5. Re-solve with the best carbon price found, which is reported in results
+
+This allows the model to find the carbon price required to meet an exogenous emissions target without the user specifying the price directly.
 
 ## Convergence Parameters
 
@@ -99,4 +127,4 @@ Information that carries forward between periods:
 
 The model solves 10 regions $\times$ 31 periods = 310 region-period combinations. Each typically converges in 3--10 price iterations. Total wall time is approximately **5--10 seconds** on a modern laptop (Python 3.11, no parallelization).
 
-**Implementation**: [`ghim/solver/recursive.py`](../ghim/solver/recursive.py) -- functions `solve_period`, `run_model`, dataclasses `PeriodResult`, `RegionModel`.
+**Implementation**: [`ghim/solver/recursive.py`](../ghim/solver/recursive.py) -- functions `solve_period`, `run_model`, dataclasses `PeriodResult`, `RegionModel`. Policy injection uses [`ghim/policy.py`](../ghim/policy.py).

@@ -4,11 +4,7 @@
 
 ### Energy demand
 
-- **No autonomous energy efficiency improvement (AEEI)**: Energy demand grows proportionally with GDP (modulated only by the CES price elasticity). Real-world energy intensity has been declining at ~1-2% per year due to technological progress and structural change. Note: income elasticities < 1 partially capture this effect by dampening demand growth relative to GDP growth. Adding an explicit AEEI parameter $\gamma$ would further modify the demand equation to:
-
-$$
-E(t) = E_0 \cdot \frac{GDP(t)}{GDP_0} \cdot (1 - \gamma)^{t - t_0} \cdot \left(\frac{P_E}{P_{E,0}}\right)^{-\sigma}
-$$
+- **~~No autonomous energy efficiency improvement (AEEI)~~**: **Resolved.** AEEI is now available as a policy variable via `--efficiency-rate` or the `efficiency_standards` field in policy JSON files. The AEEI multiplier $(1-r)^{t-t_0}$ is applied to both total and per-sector energy demand. See [Policy Variables](policy.md).
 
 ### Technology dynamics
 
@@ -22,7 +18,7 @@ $$
 
 ### Policy and climate
 
-- **No carbon pricing**: There is no carbon tax or cap-and-trade system. All emission trajectories are "baseline" (no climate policy).
+- **~~No carbon pricing~~**: **Resolved.** Carbon pricing (tax and cap-and-trade via emissions caps) is now fully implemented. See [Policy Variables](policy.md). Additional policy instruments include renewable subsidies, technology constraints, and revenue recycling.
 
 - **No climate feedback**: The model does not include a climate module — there is no temperature trajectory or climate damage function affecting GDP. Integration with a simple climate model (e.g., FaIR, Hector) would close this loop.
 
@@ -44,8 +40,8 @@ $$
 |---------|--------|-------------|
 | ~~Learning curves~~ | **Done** | WITCH-style experience curves for wind, solar, batteries |
 | ~~Full market clearing~~ | **Partially done** | Endogenous GDP with energy cost feedback, but primary fuels still exogenous |
-| AEEI | Planned | Autonomous efficiency improvement parameter |
-| Carbon pricing | Planned | Exogenous carbon tax applied to fossil fuel costs |
+| ~~AEEI~~ | **Done** | Autonomous efficiency improvement via policy `efficiency_standards` |
+| ~~Carbon pricing~~ | **Done** | Carbon tax, emissions caps, revenue recycling, tech constraints, subsidies |
 | IEA calibration | Planned | Use licensed IEA World Energy Balance for precise base-year data |
 | Historical period tracking | Planned | Load actual IEA/CDIAC data for 2000-2020 |
 

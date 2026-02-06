@@ -145,7 +145,7 @@ Factory functions:
 
 Methods:
 - **`calibrate(base_shares, fuel_prices)`** — Calibrate share weights from observed generation shares.
-- **`compute_supply(fuel_prices, total_demand_ej, years_from_base=0) → dict[str, float]`** — Compute generation by technology.
+- **`compute_supply(fuel_prices, total_demand_ej, years_from_base=0, cost_adjustments=None, share_constraints=None, year=None) → dict[str, float]`** — Compute generation by technology. Optional `cost_adjustments` (tech→$/GJ subsidy) and `share_constraints` (list of `TechConstraint`) for policy support.
 - **`weighted_cost(fuel_prices) → float`** — Compute sector-average electricity price.
 - **`fuel_consumption(generation_by_tech) → dict[str, float]`** — Compute fuel inputs.
 - **`emissions_mtc(generation_by_tech) → float`** — Compute total CO$_2$ emissions.
@@ -164,7 +164,7 @@ Methods:
 
 Methods:
 - **`calibrate(base_shares, fuel_prices)`** — Calibrate share weights from observed production shares.
-- **`compute_supply(fuel_prices, demand_ej, years_from_base=0) → dict[str, float]`** — Compute production by technology.
+- **`compute_supply(fuel_prices, demand_ej, years_from_base=0, cost_adjustments=None, share_constraints=None, year=None) → dict[str, float]`** — Compute production by technology. Optional `cost_adjustments` and `share_constraints` for policy support.
 - **`fuel_consumption(production_by_tech) → dict[str, float]`** — Compute fuel inputs.
 - **`weighted_cost(fuel_prices) → float`** — Compute sector-average hydrogen price.
 - **`emissions_mtc(production_by_tech) → float`** — Compute total CO$_2$ emissions.
@@ -203,7 +203,7 @@ Methods:
 ### `ghim.solver.recursive`
 
 **`PeriodResult`** (dataclass)
-: Results for one region in one period. See [Usage Guide](usage.md) for field descriptions. Includes fields: `gross_output`, `net_output`, `capital_stock`, `investment`, `energy_cost`, `ssp_reference_gdp`, `tfp`.
+: Results for one region in one period. See [Usage Guide](usage.md) for field descriptions. Includes fields: `gross_output`, `net_output`, `capital_stock`, `investment`, `energy_cost`, `ssp_reference_gdp`, `tfp`, `carbon_price_usd_tco2`, `carbon_revenue_billion_usd`, `aeei_factor`.
 
 **`RegionModel`** (dataclass)
 : All model components for a single region (KLEM, electricity, refining, hydrogen, demand sectors, prices).
@@ -211,11 +211,67 @@ Methods:
 **`build_region_model(region, base_gdp, base_pop) → RegionModel`**
 : Initialize and calibrate a region model.
 
-**`solve_period(region_model, ssp_gdp, population, year) → PeriodResult`**
-: Solve a single period with price iteration until convergence. The `ssp_gdp` parameter provides the SSP reference GDP for TFP calibration.
+**`solve_period(region_model, ssp_gdp, population, year, policy=None) → PeriodResult`**
+: Solve a single period with price iteration until convergence. Optional `policy` parameter (`PolicyScenario`) injects carbon pricing, subsidies, efficiency standards, and tech constraints into the solve.
 
-**`run_model(ssp_data, scenario="SSP2") → list[PeriodResult]`**
-: Run the full model for all regions and periods.
+**`run_model(ssp_data, scenario="SSP2", policy=None) → list[PeriodResult]`**
+: Run the full model for all regions and periods. When `policy` includes an emissions cap, uses bisection on carbon price to find the shadow price that meets the cap.
+
+---
+
+## Policy
+
+### `ghim.policy`
+
+**`PolicyScenario`** (dataclass)
+: Root container holding all sub-policies. All fields default to zero/disabled.
+
+Fields:
+- `name: str` — scenario name
+- `carbon_price: CarbonPricePolicy`
+- `renewable_subsidies: RenewableSubsidy`
+- `efficiency_standards: EfficiencyStandard`
+- `emissions_cap: EmissionsCap`
+- `tech_constraints: list[TechConstraint]`
+- `revenue_recycling: RevenueRecycling`
+
+**`CarbonPricePolicy(trajectory: dict[int, float])`**
+: Carbon price trajectory (year → $/tCO$_2$). Linearly interpolated, flat beyond endpoints.
+
+- **`get_price(year) → float`** — Interpolated price at given year.
+
+**`RenewableSubsidy(subsidies: dict[str, dict[int, float]])`**
+: Per-technology subsidies (tech name → year → $/GJ cost reduction).
+
+- **`get_subsidy(tech, year) → float`** — Interpolated subsidy for a technology.
+
+**`EfficiencyStandard(rates: dict[str, dict[int, float]])`**
+: AEEI rates (scope → year → annual improvement rate). Scope can be `"global"` or a sector name.
+
+- **`cumulative_factor(sector, year, base_year) → float`** — Returns $(1-r)^{(year - base\_year)}$. Falls back to `"global"` if sector not found.
+
+**`EmissionsCap(caps: dict[str, dict[int, float]])`**
+: Emissions cap trajectory (scope → year → MtCO$_2$).
+
+- **`get_cap(scope, year) → float | None`** — Interpolated cap value.
+- **`has_cap(year) → bool`** — Whether any cap is active for this year.
+
+**`TechConstraint(sector, technology, constraint_type, trajectory)`**
+: Share constraint for a technology. `constraint_type` is `"max"` or `"min"`.
+
+- **`get_bound(year) → float`** — Interpolated bound value.
+
+**`RevenueRecycling(fraction: float)`**
+: Fraction of carbon revenue recycled to reduce energy cost (0–1).
+
+**`load_policy(path) → PolicyScenario`**
+: Load a `PolicyScenario` from a JSON file. Converts string year keys to int.
+
+**`policy_from_cli(carbon_price=0, efficiency_rate=0, recycling_fraction=0) → PolicyScenario`**
+: Build a constant-value `PolicyScenario` from CLI flag values.
+
+**`apply_share_constraints(shares, tech_names, constraints, year, sector) → ndarray`**
+: Clamp technology shares to min/max bounds and renormalize. Uses iterative clamp-and-redistribute algorithm.
 
 ---
 

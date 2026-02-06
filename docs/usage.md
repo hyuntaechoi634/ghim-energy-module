@@ -27,7 +27,7 @@ The `.[dev]` install includes test dependencies (pytest, pytest-cov).
 python -m pytest ghim/tests/ -v
 ```
 
-All 40 tests should pass.
+All 76 tests should pass.
 
 ## Running the Model
 
@@ -46,6 +46,28 @@ This runs the full model for all 10 regions, 31 periods (2000–2150), producing
 | `--scenario` | `SSP2` | SSP scenario: SSP1, SSP2, SSP3, SSP4, SSP5 |
 | `--output-dir` | `ghim_output` | Directory for CSV output |
 | `--no-csv` | (flag) | Skip CSV export, print summary only |
+| `--policy` | (none) | Path to JSON policy scenario file |
+| `--carbon-price` | 0 | Constant carbon price in $/tCO$_2$ |
+| `--efficiency-rate` | 0 | Annual energy efficiency improvement rate |
+| `--recycling-fraction` | 0 | Fraction of carbon revenue recycled (0-1) |
+
+### Running with policies
+
+```bash
+# Simple carbon tax
+python -m ghim.run --scenario SSP2 --carbon-price 50
+
+# Carbon tax with revenue recycling
+python -m ghim.run --scenario SSP2 --carbon-price 100 --recycling-fraction 0.5
+
+# Energy efficiency improvement
+python -m ghim.run --scenario SSP2 --efficiency-rate 0.01
+
+# Full policy scenario from JSON file
+python -m ghim.run --scenario SSP2 --policy scenarios/net_zero_2050.json
+```
+
+See [Policy Variables](policy.md) for the full JSON schema and all policy types.
 
 ### Example output
 
@@ -100,7 +122,7 @@ from ghim.solver.recursive import run_model
 # Load SSP2 data
 ssp_data = load_ssp_data("SSP2")
 
-# Run the model
+# Run the model (no policy — baseline)
 results = run_model(ssp_data, "SSP2")
 
 # Analyze results
@@ -108,6 +130,31 @@ for r in results:
     if r.region == "North America" and r.year == 2050:
         print(f"NA 2050 emissions: {r.emissions_mtco2:.0f} MtCO2")
         print(f"NA 2050 electricity mix: {r.electricity_gen_ej}")
+```
+
+#### Running with a policy
+
+```python
+from ghim.data.ssp import load_ssp_data
+from ghim.solver.recursive import run_model
+from ghim.policy import load_policy, policy_from_cli
+
+ssp_data = load_ssp_data("SSP2")
+
+# Option 1: From a JSON file
+policy = load_policy("scenarios/net_zero_2050.json")
+results = run_model(ssp_data, "SSP2", policy=policy)
+
+# Option 2: Simple carbon tax via CLI builder
+policy = policy_from_cli(carbon_price=100.0, recycling_fraction=0.5)
+results = run_model(ssp_data, "SSP2", policy=policy)
+
+# Check carbon price effect
+for r in results:
+    if r.region == "North America" and r.year == 2050:
+        print(f"Carbon price: ${r.carbon_price_usd_tco2:.0f}/tCO2")
+        print(f"Emissions: {r.emissions_mtco2:.0f} MtCO2")
+        print(f"AEEI factor: {r.aeei_factor:.3f}")
 ```
 
 ### Key data structures
@@ -135,6 +182,9 @@ for r in results:
 | `energy_cost` | float | Total energy cost (billion USD) |
 | `ssp_reference_gdp` | float | SSP reference GDP for comparison (billion USD) |
 | `tfp` | float | Total factor productivity A(t) |
+| `carbon_price_usd_tco2` | float | Active carbon price ($/tCO$_2$) |
+| `carbon_revenue_billion_usd` | float | Carbon revenue after recycling (billion USD) |
+| `aeei_factor` | float | Cumulative efficiency factor (1.0 = no policy) |
 
 ## Testing
 
@@ -153,6 +203,7 @@ python -m pytest ghim/tests/ -v
 | `test_data_loading.py` | 7 | Region mapping, SSP data loading, population/GDP validation |
 | `test_electricity.py` | 8 | Supply sums, calibration, emissions, LCOE |
 | `test_solver.py` | 8 | Single-period solve, full model run, emissions sanity check |
+| `test_policy.py` | 36 | Policy dataclasses, interpolation, JSON loading, CLI builder, share constraints, carbon price, subsidies, AEEI, tech constraints, revenue recycling, emissions cap |
 
 ## Building Documentation
 

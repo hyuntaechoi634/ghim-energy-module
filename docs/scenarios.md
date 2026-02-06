@@ -14,7 +14,7 @@ The SSP framework defines five narratives describing alternative socioeconomic f
 | SSP4 | Inequality | High inequality within and across countries; advanced economies grow while others stagnate |
 | SSP5 | Fossil-fueled Development | Rapid growth powered by fossil fuels; high energy demand, high GDP, low population growth |
 
-> **Note**: GHIM does not include climate policy (carbon pricing, emissions targets). SSPs here drive only the macroeconomic boundary conditions (population, GDP trajectory). The energy system response is endogenous.
+> **Note**: SSPs drive the macroeconomic boundary conditions (population, GDP trajectory). The energy system response is endogenous. Climate policies (carbon pricing, emissions targets, technology constraints, etc.) are specified separately via the [Policy Variables](policy.md) system and can be combined with any SSP scenario.
 
 ## Data Source
 
@@ -106,3 +106,26 @@ $$
 This nearest-year fill approach is implemented in `load_ssp_data()` and affects only the 2000 period, which falls within the historical initialization window (2000-2015). Since TFP is calibrated to match the SSP trajectory, small inaccuracies in these early years have minimal impact on model results from 2020 onward.
 
 **Implementation**: [`ghim/data/ssp.py`](../ghim/data/ssp.py) — functions `load_ssp_data`, `_extrapolate_beyond`, `_build_ssp_country_to_r10`.
+
+## Policy Scenarios
+
+In addition to SSP socioeconomic pathways, GHIM supports **policy scenarios** that overlay climate and energy policies on top of any SSP. These are specified via JSON files or CLI flags and include carbon pricing, renewable subsidies, efficiency standards, emissions caps, technology constraints, and revenue recycling.
+
+Example scenario files are provided in the `scenarios/` directory:
+
+| File | Description |
+|------|-------------|
+| `scenarios/carbon_tax_50.json` | Constant $50/tCO$_2$ carbon tax |
+| `scenarios/net_zero_2050.json` | Rising carbon price + coal phase-out + renewables floor + subsidies + AEEI + emissions cap |
+
+Running with a policy:
+
+```bash
+# SSP2 + net zero policy
+python -m ghim.run --scenario SSP2 --policy scenarios/net_zero_2050.json
+
+# SSP3 + simple carbon tax
+python -m ghim.run --scenario SSP3 --carbon-price 100
+```
+
+See [Policy Variables](policy.md) for the full specification.

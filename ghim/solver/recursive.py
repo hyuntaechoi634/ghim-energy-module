@@ -56,6 +56,10 @@ class PeriodResult:
     energy_cost: float = 0.0            # total energy cost (billion USD)
     ssp_reference_gdp: float = 0.0     # SSP GDP for comparison (billion USD)
     tfp: float = 0.0                    # total factor productivity
+    # Policy fields
+    carbon_price_usd_tco2: float = 0.0  # active carbon price ($/tCO2)
+    carbon_revenue_billion_usd: float = 0.0  # carbon revenue (billion USD)
+    aeei_factor: float = 1.0            # cumulative efficiency factor
 
 
 @dataclass
@@ -160,15 +164,55 @@ def solve_period(
     ssp_gdp: float,
     population: float,
     year: int,
+    policy: "PolicyScenario | None" = None,
 ) -> PeriodResult:
     """Solve a single period for a single region.
 
     Uses endogenous GDP (DICE-style) with energy cost feedback.
     Iterates on energy prices until supply equals demand.
+
+    Parameters
+    ----------
+    policy : PolicyScenario, optional
+        Active policy scenario. None means no policy (default behavior).
     """
+    from ghim.policy import PolicyScenario
+
+    if policy is None:
+        policy = PolicyScenario()
+
     rm = region_model
     prices = dict(rm.fuel_prices)
     years_from_base = max(year - BASE_YEAR, 0)
+
+    # --- Policy: carbon price adder on fuel prices ---
+    carbon_price = policy.carbon_price.get_price(year)
+    if carbon_price > 0:
+        for fuel, coef in CARBON_COEFS.items():
+            if coef > 0 and fuel in prices:
+                prices[fuel] += coef * TC_TO_TCO2 * carbon_price
+
+    # --- Policy: prepare subsidy and constraint dicts for supply sectors ---
+    elec_subsidies: dict[str, float] | None = None
+    h2_subsidies: dict[str, float] | None = None
+    if policy.renewable_subsidies.subsidies:
+        elec_subsidies = {}
+        h2_subsidies = {}
+        for tech in policy.renewable_subsidies.subsidies:
+            sub = policy.renewable_subsidies.get_subsidy(tech, year)
+            if sub > 0:
+                elec_subsidies[tech] = sub
+                h2_subsidies[tech] = sub
+        if not elec_subsidies:
+            elec_subsidies = None
+        if not h2_subsidies:
+            h2_subsidies = None
+
+    elec_constraints = [tc for tc in policy.tech_constraints if tc.sector == "electricity"] or None
+    h2_constraints = [tc for tc in policy.tech_constraints if tc.sector == "hydrogen"] or None
+
+    # --- Policy: AEEI factor ---
+    aeei_factor = policy.efficiency_standards.cumulative_factor("global", year, BASE_YEAR)
 
     # 1. Set TFP from pre-computed trajectory
     rm.klem.set_tfp_for_year(year)
@@ -196,18 +240,29 @@ def solve_period(
         # 3b. Total energy demand from KLEM
         total_energy = rm.klem.compute_energy_demand(gdp_for_demand, energy_price_index)
 
+        # Apply AEEI to total energy demand
+        total_energy *= aeei_factor
+
         # 3c. Final demand by sector and carrier
         final_demand = {}
         total_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
         for name, sector in rm.demand_sectors.items():
             carrier_demand = sector.compute_demand(gdp_for_demand, prices)
+            # Apply per-sector AEEI
+            sector_aeei = policy.efficiency_standards.cumulative_factor(name, year, BASE_YEAR)
+            carrier_demand = {c: d * sector_aeei for c, d in carrier_demand.items()}
             final_demand[name] = carrier_demand
             for c, d in carrier_demand.items():
                 total_by_carrier[c] = total_by_carrier.get(c, 0.0) + d
 
-        # 3d. Electricity supply
+        # 3d. Electricity supply (with subsidies + constraints)
         elec_demand = total_by_carrier.get("electricity", 5.0)
-        elec_gen = rm.electricity.compute_supply(prices, elec_demand, years_from_base)
+        elec_gen = rm.electricity.compute_supply(
+            prices, elec_demand, years_from_base,
+            cost_adjustments=elec_subsidies,
+            share_constraints=elec_constraints,
+            year=year,
+        )
         new_elec_price = rm.electricity.weighted_cost(prices)
 
         # 3e. Refined liquids supply
@@ -215,9 +270,14 @@ def solve_period(
         ref_result = rm.refining.compute_supply(liquids_demand, prices.get("oil", 8.0))
         new_liquids_price = ref_result["cost_per_gj"]
 
-        # 3f. Hydrogen supply
+        # 3f. Hydrogen supply (with subsidies + constraints)
         h2_demand = total_by_carrier.get("hydrogen", 0.1)
-        h2_gen = rm.hydrogen.compute_supply(prices, max(h2_demand, 0.01), years_from_base)
+        h2_gen = rm.hydrogen.compute_supply(
+            prices, max(h2_demand, 0.01), years_from_base,
+            cost_adjustments=h2_subsidies,
+            share_constraints=h2_constraints,
+            year=year,
+        )
         new_h2_price = rm.hydrogen.weighted_cost(prices)
 
         # 3g. Check price convergence and update
@@ -246,13 +306,8 @@ def solve_period(
     carrier_prices_arr = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
     avg_price = np.mean(carrier_prices_arr)
     energy_cost = KLEMDriver.compute_energy_cost(total_energy, avg_price)
-    net_output = KLEMDriver.compute_net_output(gross_output, energy_cost)
 
-    # 5. Investment and capital update
-    investment = rm.klem.compute_investment(net_output)
-    rm.klem.update_capital(investment)
-
-    # 6. Compute emissions
+    # 6. Compute emissions (before revenue recycling, which depends on emissions)
     elec_emissions = rm.electricity.emissions_mtc(elec_gen)
     ref_emissions = ref_result.get("emissions_mtc", 0.0)
     h2_emissions = rm.hydrogen.emissions_mtc(h2_gen)
@@ -266,6 +321,23 @@ def solve_period(
 
     total_emissions_mtc = elec_emissions + ref_emissions + h2_emissions + direct_emissions
     total_emissions_mtco2 = total_emissions_mtc * TC_TO_TCO2
+
+    # --- Policy: revenue recycling ---
+    carbon_revenue = 0.0
+    if carbon_price > 0 and policy.revenue_recycling.fraction > 0:
+        # Revenue = price * emissions (MtCO2) / 1000 (to GtCO2) * 1e9 (to $/billion)
+        # Simplified: revenue_billion = carbon_price * total_emissions_mtco2 / 1000
+        carbon_revenue = (
+            carbon_price * total_emissions_mtco2 / 1000.0
+            * policy.revenue_recycling.fraction
+        )
+        energy_cost = max(energy_cost - carbon_revenue, 0.0)
+
+    net_output = KLEMDriver.compute_net_output(gross_output, energy_cost)
+
+    # 5. Investment and capital update
+    investment = rm.klem.compute_investment(net_output)
+    rm.klem.update_capital(investment)
 
     return PeriodResult(
         year=year,
@@ -287,12 +359,16 @@ def solve_period(
         energy_cost=energy_cost,
         ssp_reference_gdp=ssp_gdp,
         tfp=rm.klem.tfp,
+        carbon_price_usd_tco2=carbon_price,
+        carbon_revenue_billion_usd=carbon_revenue,
+        aeei_factor=aeei_factor,
     )
 
 
 def run_model(
     ssp_data: dict[str, "pd.DataFrame"],
     scenario: str = "SSP2",
+    policy: "PolicyScenario | None" = None,
 ) -> list[PeriodResult]:
     """Run the full model for all regions and periods.
 
@@ -300,12 +376,20 @@ def run_model(
     ----------
     ssp_data : dict
         Output from ``load_ssp_data()`` with keys "population" and "gdp".
+    policy : PolicyScenario, optional
+        Policy scenario to apply. None = no policy.
 
     Returns
     -------
     list[PeriodResult]
         Results for every region x period combination.
     """
+    import copy
+    from ghim.policy import PolicyScenario, CarbonPricePolicy
+
+    if policy is None:
+        policy = PolicyScenario()
+
     pop_df = ssp_data["population"]
     gdp_df = ssp_data["gdp"]
 
@@ -331,10 +415,72 @@ def run_model(
     # Solve period by period
     all_results: list[PeriodResult] = []
     for year in MODEL_YEARS:
-        for region in R10_REGIONS:
-            gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
-            pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
-            result = solve_period(region_models[region], gdp, pop, year)
-            all_results.append(result)
+        # Check if emissions cap requires bisection on carbon price
+        cap_active = policy.emissions_cap.has_cap(year)
+        global_cap = None
+        if cap_active:
+            global_cap = policy.emissions_cap.get_cap("global", year)
+
+        if global_cap is not None and global_cap < float("inf"):
+            # Bisection on carbon price to meet emissions cap
+            saved_states = {r: copy.deepcopy(region_models[r]) for r in R10_REGIONS}
+            price_lo = 0.0
+            price_hi = policy.emissions_cap.bisect_price_max
+
+            best_results: list[PeriodResult] = []
+            best_price = 0.0
+
+            for bisect_iter in range(policy.emissions_cap.bisect_max_iter):
+                price_mid = (price_lo + price_hi) / 2.0
+
+                # Create modified policy with this carbon price
+                cap_policy = copy.deepcopy(policy)
+                # Override carbon price for this year (set flat at price_mid)
+                cap_policy.carbon_price = CarbonPricePolicy(trajectory={year: price_mid})
+
+                # Restore region model states
+                trial_models = {r: copy.deepcopy(saved_states[r]) for r in R10_REGIONS}
+
+                trial_results: list[PeriodResult] = []
+                for region in R10_REGIONS:
+                    gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
+                    pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
+                    result = solve_period(trial_models[region], gdp, pop, year, cap_policy)
+                    trial_results.append(result)
+
+                total_emissions = sum(r.emissions_mtco2 for r in trial_results)
+
+                if abs(total_emissions - global_cap) / max(global_cap, 1.0) < policy.emissions_cap.bisect_tol:
+                    best_results = trial_results
+                    best_price = price_mid
+                    break
+
+                if total_emissions > global_cap:
+                    price_lo = price_mid
+                else:
+                    price_hi = price_mid
+
+                best_results = trial_results
+                best_price = price_mid
+
+            # Apply the best bisection result: update region models from trial
+            # Re-run with best price to get final state
+            final_policy = copy.deepcopy(policy)
+            final_policy.carbon_price = CarbonPricePolicy(trajectory={year: best_price})
+            # Restore and re-solve with best price
+            for region in R10_REGIONS:
+                region_models[region] = copy.deepcopy(saved_states[region])
+            for region in R10_REGIONS:
+                gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
+                pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
+                result = solve_period(region_models[region], gdp, pop, year, final_policy)
+                all_results.append(result)
+        else:
+            # Normal solve (no emissions cap)
+            for region in R10_REGIONS:
+                gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
+                pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
+                result = solve_period(region_models[region], gdp, pop, year, policy)
+                all_results.append(result)
 
     return all_results

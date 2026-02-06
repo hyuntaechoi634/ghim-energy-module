@@ -85,3 +85,4 @@ __pycache__/
 dist/
 ghim_output/
 .pytest_cache/
+docs/_build/

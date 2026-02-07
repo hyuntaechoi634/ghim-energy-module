@@ -86,3 +86,6 @@ dist/
 ghim_output/
 .pytest_cache/
 docs/_build/
+
+# User-provided external data staging area
+/data/

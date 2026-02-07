@@ -140,7 +140,7 @@ TRADE_PRICE_TOL: float = 0.01          # $/GJ tolerance for market clearing
 TRADE_MAX_ITER: int = 50               # max bisection iterations
 TRADE_PRICE_FLOOR: float = 0.1         # min world price $/GJ
 TRADE_PRICE_CEILING: float = 50.0      # max world price $/GJ
-GCAM3_TO_2020_DEFLATOR: float = 3.56   # 1975$ → 2020$ GDP deflator
+GCAM3_TO_2020_DEFLATOR: float = 3.79   # 1975$ → 2020$ GDP deflator (BEA 105.381/27.800)
 
 # ---------------------------------------------------------------------------
 # Carbon coefficients (tC per GJ of fuel input)

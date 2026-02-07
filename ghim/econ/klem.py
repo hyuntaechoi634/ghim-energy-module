@@ -115,7 +115,7 @@ class KLEMDriver:
         self.capital_stock = k_hist[HISTORICAL_YEARS[0]]
 
         # Future years: forward-evolve K from BASE_YEAR
-        k_ref = self.capital_stock  # K(BASE_YEAR)
+        k_ref = k_hist[BASE_YEAR]  # K(BASE_YEAR)
         for year in FUTURE_YEARS:
             # Evolve K first (using previous period's Y_SSP)
             prev_year = year - TIMESTEP

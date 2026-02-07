@@ -137,6 +137,25 @@ class TestEdgeCases:
         for year in MODEL_YEARS:
             assert d._tfp_trajectory[year] > 0
 
+    def test_future_tfp_uses_base_year_k(self):
+        """TFP should not spike at the historical→future boundary.
+
+        Regression test: a bug caused forward TFP calibration to use K(2000)
+        instead of K(BASE_YEAR), producing inflated TFP that caused a GDP
+        surge at the 2020→2025 transition.
+        """
+        d = _make_driver(gdp=5000.0, pop=500.0)
+        gdp_path = _ssp_growing(start=3000.0, growth=0.02)
+        pop_path = _ssp_growing(start=400.0, growth=0.005)
+        d.init_tfp_trajectory(gdp_path, pop_path)
+        tfp_2020 = d._tfp_trajectory[BASE_YEAR]
+        tfp_2025 = d._tfp_trajectory[BASE_YEAR + TIMESTEP]
+        # TFP at 2025 should be within 50% of TFP at 2020
+        assert tfp_2025 / tfp_2020 < 1.5, (
+            f"TFP spike at boundary: TFP(2020)={tfp_2020:.4f}, "
+            f"TFP(2025)={tfp_2025:.4f}, ratio={tfp_2025/tfp_2020:.2f}"
+        )
+
     def test_zero_population_fallback(self):
         """Zero population should trigger TFP fallback, not crash."""
         d = _make_driver(gdp=1000.0, pop=100.0)

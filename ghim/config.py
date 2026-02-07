@@ -143,6 +143,7 @@ TRADE_PRICE_CEILING: float = 50.0      # max world price $/GJ
 TRADE_DEMAND_MAX_ITER: int = 10        # max demand-trade iterations per period
 TRADE_DEMAND_DAMP: float = 0.5         # damping for price updates between iterations
 TRADE_DEMAND_TOL: float = 0.02         # 2% relative price convergence for demand loop
+TRADE_TRANSITION_YEARS: int = 20       # blend observed→trade-cleared prices over N years
 GCAM3_TO_2020_DEFLATOR: float = 3.79   # 1975$ → 2020$ GDP deflator (BEA 105.381/27.800)
 
 # Observed 2020 fossil fuel prices (2020$/GJ) from BP Statistical Review

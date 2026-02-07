@@ -514,6 +514,7 @@ def _solve_regions_for_period(
         TRADE_DEMAND_DAMP,
         TRADE_DEMAND_TOL,
         OBSERVED_FUEL_PRICES_2020,
+        TRADE_TRANSITION_YEARS,
     )
     from ghim.energy.trade import TradeResult
 
@@ -644,6 +645,24 @@ def _solve_regions_for_period(
                         trade_prices_by_region[region] = trade_module.delivered_prices(
                             trade_results, region
                         )
+
+    # --- Trade price transition blending ---
+    # In early projection periods, blend observed→trade-cleared world prices
+    # to smooth the transition from calibrated prices to model-determined prices.
+    if (trade_module is not None and trade_module.enabled
+            and year > BASE_YEAR and trade_results is not None
+            and TRADE_TRANSITION_YEARS > 0):
+        w = min(1.0, (year - BASE_YEAR) / TRADE_TRANSITION_YEARS)
+        if w < 1.0:
+            for fuel in TRADED_FUELS:
+                obs = OBSERVED_FUEL_PRICES_2020[fuel]
+                cleared = trade_results[fuel].world_price
+                trade_results[fuel].world_price = (1 - w) * obs + w * cleared
+            # Recompute delivered prices from blended world prices
+            for region in R10_REGIONS:
+                trade_prices_by_region[region] = trade_module.delivered_prices(
+                    trade_results, region
+                )
 
     # Step 3/4: Solve each region with trade-determined (or default) prices
     period_results: list[PeriodResult] = []

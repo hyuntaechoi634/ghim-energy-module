@@ -37,6 +37,7 @@ class ResourceSupply:
     fuel: str
     grades: list[ResourceGrade]
     cumulative_extracted: float = 0.0
+    max_annual_production: float = 0.0  # EJ/yr cap (0 = unlimited)
 
     def marginal_cost(self) -> float:
         """Return the current marginal extraction cost based on depletion."""
@@ -74,6 +75,25 @@ class ResourceSupply:
 
         self.cumulative_extracted += amount_ej
         return cost_sum / amount_ej if amount_ej > 0 else 0.0
+
+    def production_at_price(self, price: float) -> float:
+        """Producible amount (EJ) at given price.
+
+        Returns the sum of remaining resource in all grades whose
+        extraction cost is at or below ``price``, capped by
+        ``max_annual_production`` if set.
+        """
+        total = 0.0
+        cumul = 0.0
+        eps = 1e-6  # floating-point tolerance for grade cost comparison
+        for grade in self.grades:
+            if grade.extraction_cost <= price + eps:
+                remaining = max(0, grade.available - max(0, self.cumulative_extracted - cumul))
+                total += remaining
+            cumul += grade.available
+        if self.max_annual_production > 0:
+            total = min(total, self.max_annual_production)
+        return total
 
     def _grade_cumulative_start(self, target_grade: ResourceGrade) -> float:
         cumul = 0.0

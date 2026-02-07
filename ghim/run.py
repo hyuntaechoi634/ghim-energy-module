@@ -41,6 +41,10 @@ def main() -> None:
         "--recycling-fraction", type=float, default=0.0,
         help="Fraction of carbon revenue recycled (0-1, default: 0)",
     )
+    parser.add_argument(
+        "--no-trade", action="store_true",
+        help="Disable inter-regional primary energy trade",
+    )
     args = parser.parse_args()
 
     # Build policy scenario
@@ -64,7 +68,10 @@ def main() -> None:
 
     print(f"Running model for {len(ssp_data['population'])} regions...")
     from ghim.solver.recursive import run_model
-    results = run_model(ssp_data, args.scenario, policy=policy)
+    trade_enabled = not args.no_trade
+    if not trade_enabled:
+        print("Trade disabled (--no-trade)")
+    results = run_model(ssp_data, args.scenario, policy=policy, trade_enabled=trade_enabled)
 
     from ghim.output.reporting import print_summary, export_csv
     print_summary(results)

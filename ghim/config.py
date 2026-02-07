@@ -132,6 +132,20 @@ DEFAULT_SSP: str = "SSP2"
 # Carbon coefficients (tC per GJ of fuel input)
 # Source: IPCC defaults, approximated
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Inter-regional trade
+# ---------------------------------------------------------------------------
+TRADED_FUELS: list[str] = ["coal", "oil", "gas"]
+TRADE_PRICE_TOL: float = 0.01          # $/GJ tolerance for market clearing
+TRADE_MAX_ITER: int = 50               # max bisection iterations
+TRADE_PRICE_FLOOR: float = 0.1         # min world price $/GJ
+TRADE_PRICE_CEILING: float = 50.0      # max world price $/GJ
+GCAM3_TO_2020_DEFLATOR: float = 3.56   # 1975$ → 2020$ GDP deflator
+
+# ---------------------------------------------------------------------------
+# Carbon coefficients (tC per GJ of fuel input)
+# Source: IPCC defaults, approximated
+# ---------------------------------------------------------------------------
 CARBON_COEFS: dict[str, float] = {
     "coal": 0.0257,           # ~94.6 kgCO2/GJ → 25.8 kgC/GJ
     "gas": 0.0153,            # ~56.1 kgCO2/GJ → 15.3 kgC/GJ

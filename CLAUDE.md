@@ -122,28 +122,32 @@ pip install -e ".[dev]"                                # from repo root (pyproje
 
 ### Key Commands
 ```bash
-python -m ghim.run --scenario SSP2                     # Run full model (10 regions, 31 periods, 2000-2150)
-python -m pytest ghim/tests/ -v                        # Run tests (40 tests)
+python -m ghim.run --scenario SSP2                     # Run full model with trade (default)
+python -m ghim.run --scenario SSP2 --no-trade          # Run without inter-regional trade
+python -m pytest ghim/tests/ -v                        # Run tests (114 tests)
 cd docs && sphinx-build -b html . _build/html          # Build docs
 ```
 
-### Architecture (Phase 2)
+### Architecture (Phase 2 + Trade)
 - **DICE-style GDP**: `Y = A*K^α*L^(1-α)`, TFP calibrated from SSP, energy cost feedback
 - **Preference factor logit** (MERGE-style): `exp(-k*(C+P))/Σ` with decay
 - **Stock turnover**: Gradual technology transition with sector-specific turnover times
 - **Learning curves** (WITCH-style): Experience curves for solar, wind, electrolysis, etc.
 - **Nested demand**: Industry (heavy/light/data centers), buildings (residential/commercial), transport (passenger/freight)
 - **10 AR6 R10 regions**, direct ISO→R10 mapping via `ghim/data/external/region_classification.tsv`
+- **Inter-regional trade**: Global market clearing for coal, oil, gas via bisection on grade-based supply curves from GCAM
 
 ### Module Structure
 ```
 ghim/
-├── config.py          # Parameters (time, DICE, logit, learning, turnover)
+├── config.py          # Parameters (time, DICE, logit, learning, turnover, trade)
 ├── econ/klem.py       # DICE production function, capital accumulation
 ├── energy/            # Electricity (8 tech), hydrogen, refining, demand trees
-├── solver/recursive.py # Period-by-period solver with endogenous GDP
+│   └── trade.py       # GlobalMarket, TradeModule — inter-regional trade clearing
+├── solver/recursive.py # Period-by-period solver with endogenous GDP + trade
 ├── data/ssp.py        # SSP loading with historical merge + 2150 extrapolation
-└── output/reporting.py # CSV export, summary tables
+├── data/trade_cal.py  # R32→country→R10 fossil supply curve pipeline
+└── output/reporting.py # CSV export, summary tables (incl. trade columns)
 ```
 
 ### Important Notes

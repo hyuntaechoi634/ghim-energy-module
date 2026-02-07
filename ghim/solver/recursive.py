@@ -60,6 +60,10 @@ class PeriodResult:
     carbon_price_usd_tco2: float = 0.0  # active carbon price ($/tCO2)
     carbon_revenue_billion_usd: float = 0.0  # carbon revenue (billion USD)
     aeei_factor: float = 1.0            # cumulative efficiency factor
+    # Trade fields
+    world_prices: dict[str, float] = field(default_factory=dict)
+    net_exports_ej: dict[str, float] = field(default_factory=dict)
+    domestic_production_ej: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -165,6 +169,7 @@ def solve_period(
     population: float,
     year: int,
     policy: "PolicyScenario | None" = None,
+    trade_prices: dict[str, float] | None = None,
 ) -> PeriodResult:
     """Solve a single period for a single region.
 
@@ -175,6 +180,9 @@ def solve_period(
     ----------
     policy : PolicyScenario, optional
         Active policy scenario. None means no policy (default behavior).
+    trade_prices : dict, optional
+        Delivered fuel prices from trade module (fuel → $/GJ).
+        Overrides primary fuel prices for coal, oil, gas.
     """
     from ghim.policy import PolicyScenario
 
@@ -184,6 +192,11 @@ def solve_period(
     rm = region_model
     prices = dict(rm.fuel_prices)
     years_from_base = max(year - BASE_YEAR, 0)
+
+    # Apply trade-determined primary fuel prices
+    if trade_prices:
+        for fuel, price in trade_prices.items():
+            prices[fuel] = price
 
     # --- Policy: carbon price adder on fuel prices ---
     carbon_price = policy.carbon_price.get_price(year)
@@ -365,10 +378,144 @@ def solve_period(
     )
 
 
+def compute_primary_fuel_demand(
+    region_model: RegionModel,
+    population: float,
+    year: int,
+    policy: "PolicyScenario | None" = None,
+) -> dict[str, float]:
+    """Estimate primary fuel demand (coal, oil, gas) for one region.
+
+    Used by trade module to estimate demands before market clearing.
+    Runs one pass of demand computation without updating model state.
+    """
+    from ghim.policy import PolicyScenario
+    if policy is None:
+        policy = PolicyScenario()
+
+    rm = region_model
+    prices = dict(rm.fuel_prices)
+
+    # Compute gross output
+    rm.klem.set_tfp_for_year(year)
+    gross_output = rm.klem.compute_gross_output(population)
+
+    base_carrier_prices = _get_base_carrier_prices()
+    carrier_prices = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
+    energy_price_index = np.mean(carrier_prices) / np.mean(base_carrier_prices)
+
+    # Total energy from KLEM
+    aeei_factor = policy.efficiency_standards.cumulative_factor("global", year, BASE_YEAR)
+    total_energy = rm.klem.compute_energy_demand(gross_output, energy_price_index) * aeei_factor
+
+    # Final demand by carrier
+    total_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
+    for name, sector in rm.demand_sectors.items():
+        carrier_demand = sector.compute_demand(gross_output, prices)
+        sector_aeei = policy.efficiency_standards.cumulative_factor(name, year, BASE_YEAR)
+        for c, d in carrier_demand.items():
+            total_by_carrier[c] = total_by_carrier.get(c, 0.0) + d * sector_aeei
+
+    # Electricity sector fuel consumption
+    elec_demand = total_by_carrier.get("electricity", 5.0)
+    # Use current shares to estimate fuel mix (don't update state)
+    elec_fuel = {}
+    if rm.electricity.current_shares is not None:
+        for t, s in zip(rm.electricity.techs, rm.electricity.current_shares):
+            if t.efficiency > 0:
+                fuel_ej = (s * elec_demand) / t.efficiency
+                elec_fuel[t.fuel_input] = elec_fuel.get(t.fuel_input, 0.0) + fuel_ej
+
+    # Refining oil consumption
+    liquids_demand = total_by_carrier.get("refined liquids", 5.0)
+    oil_for_refining = liquids_demand / rm.refining.primary_tech.efficiency if rm.refining.primary_tech.efficiency > 0 else 0.0
+
+    # Hydrogen fuel consumption
+    h2_demand = total_by_carrier.get("hydrogen", 0.1)
+    h2_fuel = {}
+    if rm.hydrogen.current_shares is not None:
+        for t, s in zip(rm.hydrogen.techs, rm.hydrogen.current_shares):
+            if t.efficiency > 0:
+                fuel_ej = (s * max(h2_demand, 0.01)) / t.efficiency
+                h2_fuel[t.fuel_input] = h2_fuel.get(t.fuel_input, 0.0) + fuel_ej
+
+    # Aggregate primary fuel demands
+    primary: dict[str, float] = {"coal": 0.0, "oil": 0.0, "gas": 0.0}
+
+    # Direct final demand
+    primary["coal"] += total_by_carrier.get("coal", 0.0)
+    primary["gas"] += total_by_carrier.get("gas", 0.0)
+    # "refined liquids" → oil demand via refining
+    primary["oil"] += oil_for_refining
+
+    # Electricity fuel inputs
+    primary["coal"] += elec_fuel.get("coal", 0.0)
+    primary["gas"] += elec_fuel.get("gas", 0.0)
+    primary["oil"] += elec_fuel.get("oil", 0.0)
+
+    # Hydrogen fuel inputs
+    primary["gas"] += h2_fuel.get("gas", 0.0)
+
+    return primary
+
+
+def _solve_regions_for_period(
+    region_models: dict[str, RegionModel],
+    gdp_df: "pd.DataFrame",
+    pop_df: "pd.DataFrame",
+    year: int,
+    policy: "PolicyScenario",
+    trade_module: "TradeModule | None" = None,
+) -> list[PeriodResult]:
+    """Solve all regions for one period, with optional trade clearing.
+
+    Returns list of PeriodResult for the period.
+    """
+    from ghim.config import TRADED_FUELS
+
+    trade_results = None
+    trade_prices_by_region: dict[str, dict[str, float]] = {}
+
+    if trade_module is not None and trade_module.enabled:
+        # Step 1: Estimate primary fuel demands per region
+        regional_demands: dict[str, dict[str, float]] = {}
+        for region in R10_REGIONS:
+            pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
+            demands = compute_primary_fuel_demand(region_models[region], pop, year, policy)
+            regional_demands[region] = demands
+
+        # Step 2: Clear global markets → world prices
+        trade_results = trade_module.solve_trade(regional_demands)
+
+        # Step 3: Compute delivered prices per region
+        if trade_results is not None:
+            for region in R10_REGIONS:
+                trade_prices_by_region[region] = trade_module.delivered_prices(trade_results, region)
+
+    # Step 3/4: Solve each region with trade-determined (or default) prices
+    period_results: list[PeriodResult] = []
+    for region in R10_REGIONS:
+        gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
+        pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
+        tp = trade_prices_by_region.get(region)
+        result = solve_period(region_models[region], gdp, pop, year, policy, trade_prices=tp)
+
+        # Attach trade metadata
+        if trade_results is not None:
+            result.world_prices = {f: trade_results[f].world_price for f in TRADED_FUELS}
+            result.net_exports_ej = {f: trade_results[f].net_exports.get(region, 0.0) for f in TRADED_FUELS}
+            result.domestic_production_ej = {f: trade_results[f].regional_production.get(region, 0.0) for f in TRADED_FUELS}
+
+        period_results.append(result)
+
+    return period_results
+
+
 def run_model(
     ssp_data: dict[str, "pd.DataFrame"],
     scenario: str = "SSP2",
     policy: "PolicyScenario | None" = None,
+    trade_enabled: bool = True,
 ) -> list[PeriodResult]:
     """Run the full model for all regions and periods.
 
@@ -378,6 +525,8 @@ def run_model(
         Output from ``load_ssp_data()`` with keys "population" and "gdp".
     policy : PolicyScenario, optional
         Policy scenario to apply. None = no policy.
+    trade_enabled : bool
+        If True (default), enable inter-regional trade for primary fuels.
 
     Returns
     -------
@@ -412,6 +561,18 @@ def run_model(
 
         region_models[region] = rm
 
+    # Initialize trade module
+    trade_module = None
+    if trade_enabled:
+        try:
+            from ghim.data.trade_cal import build_regional_supplies, default_transport_costs
+            from ghim.energy.trade import TradeModule
+            regional_supplies = build_regional_supplies()
+            transport_costs = default_transport_costs()
+            trade_module = TradeModule(regional_supplies, transport_costs, enabled=True)
+        except Exception:
+            trade_module = None
+
     # Solve period by period
     all_results: list[PeriodResult] = []
     for year in MODEL_YEARS:
@@ -424,6 +585,7 @@ def run_model(
         if global_cap is not None and global_cap < float("inf"):
             # Bisection on carbon price to meet emissions cap
             saved_states = {r: copy.deepcopy(region_models[r]) for r in R10_REGIONS}
+            saved_trade = copy.deepcopy(trade_module) if trade_module else None
             price_lo = 0.0
             price_hi = policy.emissions_cap.bisect_price_max
 
@@ -435,18 +597,15 @@ def run_model(
 
                 # Create modified policy with this carbon price
                 cap_policy = copy.deepcopy(policy)
-                # Override carbon price for this year (set flat at price_mid)
                 cap_policy.carbon_price = CarbonPricePolicy(trajectory={year: price_mid})
 
                 # Restore region model states
                 trial_models = {r: copy.deepcopy(saved_states[r]) for r in R10_REGIONS}
+                trial_trade = copy.deepcopy(saved_trade) if saved_trade else None
 
-                trial_results: list[PeriodResult] = []
-                for region in R10_REGIONS:
-                    gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
-                    pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
-                    result = solve_period(trial_models[region], gdp, pop, year, cap_policy)
-                    trial_results.append(result)
+                trial_results = _solve_regions_for_period(
+                    trial_models, gdp_df, pop_df, year, cap_policy, trial_trade,
+                )
 
                 total_emissions = sum(r.emissions_mtco2 for r in trial_results)
 
@@ -463,24 +622,23 @@ def run_model(
                 best_results = trial_results
                 best_price = price_mid
 
-            # Apply the best bisection result: update region models from trial
             # Re-run with best price to get final state
             final_policy = copy.deepcopy(policy)
             final_policy.carbon_price = CarbonPricePolicy(trajectory={year: best_price})
-            # Restore and re-solve with best price
             for region in R10_REGIONS:
                 region_models[region] = copy.deepcopy(saved_states[region])
-            for region in R10_REGIONS:
-                gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
-                pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
-                result = solve_period(region_models[region], gdp, pop, year, final_policy)
-                all_results.append(result)
+            if saved_trade:
+                trade_module = copy.deepcopy(saved_trade)
+
+            period_results = _solve_regions_for_period(
+                region_models, gdp_df, pop_df, year, final_policy, trade_module,
+            )
+            all_results.extend(period_results)
         else:
-            # Normal solve (no emissions cap)
-            for region in R10_REGIONS:
-                gdp = float(gdp_df.loc[region, year]) if year in gdp_df.columns else 1000.0
-                pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
-                result = solve_period(region_models[region], gdp, pop, year, policy)
-                all_results.append(result)
+            # Normal solve (with or without trade)
+            period_results = _solve_regions_for_period(
+                region_models, gdp_df, pop_df, year, policy, trade_module,
+            )
+            all_results.extend(period_results)
 
     return all_results

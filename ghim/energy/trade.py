@@ -47,14 +47,25 @@ class GlobalMarket:
         self,
         world_price: float,
         regional_demands: dict[str, float],
+        price_adder: float = 0.0,
     ) -> float:
-        """Excess supply = total production - total demand at given world price."""
+        """Excess supply = total production - total demand at given world price.
+
+        Parameters
+        ----------
+        price_adder : float
+            Constant adder (e.g. calibration rent) added to the bisection
+            price when evaluating supply curves.  Supply is evaluated at
+            ``world_price + price_adder`` so the clearing respects both
+            extraction cost *and* rent simultaneously.
+        """
+        effective_price = world_price + price_adder
         total_production = 0.0
         total_demand = 0.0
         for region in regional_demands:
             supply = self.regional_supplies.get(region)
             if supply is not None:
-                total_production += supply.production_at_price(world_price)
+                total_production += supply.production_at_price(effective_price)
             total_demand += regional_demands[region]
         return total_production - total_demand
 
@@ -71,12 +82,23 @@ class GlobalMarket:
         regional_demands: dict[str, float],
         price_lo: float = TRADE_PRICE_FLOOR,
         price_hi: float = TRADE_PRICE_CEILING,
+        price_adder: float = 0.0,
     ) -> TradeResult:
         """Find world price where global supply ≈ global demand via bisection.
 
-        Because supply curves are step functions (discrete grades), the bisection
-        finds the marginal price. If total supply capacity at the clearing price
-        exceeds demand, production is scaled proportionally across regions.
+        Supply curves are piecewise-linear (continuous), so pure bisection
+        converges to the exact equilibrium price.  If total supply capacity
+        at ``price_hi`` is still below demand, a scarcity premium scales
+        the highest grade cost by the demand/supply ratio.
+
+        Parameters
+        ----------
+        price_adder : float
+            Constant adder (e.g. calibration rent) shifted into the supply
+            evaluation.  Bisection searches over *extraction-cost* prices;
+            supply is evaluated at ``extraction_cost_price + price_adder``.
+            The returned ``world_price`` = extraction_cost_price + price_adder,
+            so production allocation is already at the correct market price.
         """
         total_demand = sum(regional_demands.values())
 
@@ -84,75 +106,54 @@ class GlobalMarket:
         if total_demand <= 0:
             return TradeResult(
                 fuel=self.fuel,
-                world_price=price_lo,
+                world_price=price_lo + price_adder,
                 regional_production={r: 0.0 for r in regional_demands},
                 regional_demand=dict(regional_demands),
                 net_exports={r: 0.0 for r in regional_demands},
             )
 
-        # For step-function supply curves, find the cheapest grade cost
-        # where total supply capacity >= total demand. This is the marginal cost.
-        grade_costs = self._collect_grade_costs()
-
-        world_price = price_hi  # fallback
-        prev_cost = price_lo
-        for cost in grade_costs:
-            total_supply = sum(
-                s.production_at_price(cost)
-                for s in self.regional_supplies.values()
-            )
-            if total_supply >= total_demand:
-                world_price = cost
-                break
-            prev_cost = cost
-
-        # If no grade has enough supply (demand exceeds max capacity),
-        # use a scarcity premium rather than jumping to price_hi.
-        # Price = highest_grade_cost × (demand/max_supply) ensures a smooth
-        # signal that rises with excess demand, enabling convergence.
-        if world_price >= price_hi and grade_costs:
-            highest_cost = grade_costs[-1]
-            max_supply = sum(
-                s.production_at_price(highest_cost)
-                for s in self.regional_supplies.values()
-            )
-            if max_supply > 0:
-                scarcity_ratio = total_demand / max_supply  # > 1.0
-                world_price = min(highest_cost * scarcity_ratio, price_hi)
-
-        # Fine-tune via bisection between previous grade and this one,
-        # but ONLY if there's a price between prev_cost and world_price
-        # where supply transitions smoothly (multiple regions/grades).
-        prev_supply = sum(
-            s.production_at_price(prev_cost)
+        # Check if max capacity (at price_hi + adder) can meet demand
+        max_supply = sum(
+            s.production_at_price(price_hi + price_adder)
             for s in self.regional_supplies.values()
-        ) if prev_cost > price_lo else 0.0
+        )
 
-        if prev_supply > 0 and prev_supply < total_demand and prev_cost < world_price:
-            lo = prev_cost
-            hi = world_price
-            best_price = world_price
+        if max_supply < total_demand:
+            # Scarcity premium: price rises proportionally with excess demand
+            grade_costs = self._collect_grade_costs()
+            if grade_costs:
+                highest_cost = grade_costs[-1]
+                cap_supply = sum(
+                    s.production_at_price(highest_cost + price_adder)
+                    for s in self.regional_supplies.values()
+                )
+                if cap_supply > 0:
+                    scarcity_ratio = total_demand / cap_supply
+                    clearing_price = min(highest_cost * scarcity_ratio, price_hi)
+                else:
+                    clearing_price = price_hi
+            else:
+                clearing_price = price_hi
+        else:
+            # Pure bisection over extraction-cost prices: find price where
+            # supply(price + adder) = demand
+            lo, hi = price_lo, price_hi
             for _ in range(TRADE_MAX_ITER):
                 mid = (lo + hi) / 2.0
-                excess = self._global_excess_supply(mid, regional_demands)
+                excess = self._global_excess_supply(mid, regional_demands, price_adder)
                 if abs(excess) < TRADE_PRICE_TOL * total_demand:
-                    best_price = mid
+                    lo = hi = mid
                     break
                 if excess > 0:
                     hi = mid
                 else:
                     lo = mid
-            else:
-                best_price = (lo + hi) / 2.0
-            # Only use bisection result if it yields enough supply
-            bisect_supply = sum(
-                s.production_at_price(best_price)
-                for s in self.regional_supplies.values()
-            )
-            if bisect_supply >= total_demand:
-                world_price = best_price
+            clearing_price = (lo + hi) / 2.0
 
-        # Compute supply capacity at clearing price per region
+        # World price includes the adder (rent)
+        world_price = clearing_price + price_adder
+
+        # Compute supply capacity at world_price per region
         raw_production: dict[str, float] = {}
         for region in regional_demands:
             supply = self.regional_supplies.get(region)
@@ -204,6 +205,9 @@ class TradeModule:
         self.regional_supplies = regional_supplies
         self.transport_costs = transport_costs
         self.enabled = enabled
+        self.calibration_rents: dict[str, float] = {}
+        self.prev_world_prices: dict[str, float] = {}
+        self.prev_regional_production: dict[str, dict[str, float]] = {}  # fuel → region → EJ
 
         # Build per-fuel GlobalMarket objects
         self._markets: dict[str, GlobalMarket] = {}
@@ -237,7 +241,8 @@ class TradeModule:
         results: dict[str, TradeResult] = {}
         for fuel in TRADED_FUELS:
             demands = {r: regional_fuel_demands.get(r, {}).get(fuel, 0.0) for r in R10_REGIONS}
-            results[fuel] = self._markets[fuel].clear_market(demands)
+            adder = self.calibration_rents.get(fuel, 0.0)
+            results[fuel] = self._markets[fuel].clear_market(demands, price_adder=adder)
         return results
 
     def update_depletion(
@@ -273,3 +278,131 @@ class TradeModule:
             tc = self.transport_costs.get(fuel, {}).get(region, 0.5)
             prices[fuel] = tr.world_price + tc
         return prices
+
+    def calibrate_rents(
+        self,
+        trade_results: dict[str, TradeResult],
+        observed_prices: dict[str, float],
+    ) -> None:
+        """Compute per-fuel scarcity rent at the first projection period.
+
+        rent = max(0, observed_price - cleared_world_price)
+
+        Called once; subsequent periods reuse the same rents.
+        """
+        if self.calibration_rents:
+            return  # already calibrated
+        for fuel in TRADED_FUELS:
+            cleared = trade_results[fuel].world_price
+            observed = observed_prices.get(fuel, 0.0)
+            self.calibration_rents[fuel] = max(0.0, observed - cleared)
+
+    def smooth_prices(
+        self,
+        trade_results: dict[str, TradeResult],
+        max_change_rate: float,
+    ) -> None:
+        """Clamp rent-adjusted world prices to change at most *max_change_rate*
+        per period relative to the previous period (in place).
+
+        No-op if ``prev_world_prices`` is empty (first projection period).
+        """
+        if not self.prev_world_prices:
+            return
+        for fuel in TRADED_FUELS:
+            prev = self.prev_world_prices.get(fuel)
+            if prev is None or prev <= 0:
+                continue
+            current = trade_results[fuel].world_price
+            lo = prev * (1.0 - max_change_rate)
+            hi = prev * (1.0 + max_change_rate)
+            trade_results[fuel].world_price = max(lo, min(hi, current))
+
+    def record_world_prices(self, trade_results: dict[str, TradeResult]) -> None:
+        """Store current world prices for next period's smoothing."""
+        self.prev_world_prices = {
+            fuel: trade_results[fuel].world_price for fuel in TRADED_FUELS
+        }
+
+    def smooth_production(
+        self,
+        trade_results: dict[str, TradeResult],
+        max_decline_rate: float,
+    ) -> None:
+        """Clamp per-region production declines to at most *max_decline_rate*
+        per period (in place). Excess production is redistributed by scaling
+        down unconstrained regions so total production is preserved.
+
+        Iterates until no region violates the limit (redistribution can push
+        previously-unconstrained regions below their floor).
+
+        No-op when ``prev_regional_production`` is empty (first projection period).
+        Only constrains declines, not growth.
+        """
+        if not self.prev_regional_production:
+            return
+
+        for fuel in TRADED_FUELS:
+            prev_prod = self.prev_regional_production.get(fuel)
+            if prev_prod is None:
+                continue
+            if fuel not in trade_results:
+                continue
+
+            tr = trade_results[fuel]
+            total_original = sum(tr.regional_production.values())
+            if total_original <= 0:
+                continue
+
+            constrained: set[str] = set()
+
+            # Iterate: floor violators, scale down the rest, repeat if
+            # the scaling caused new violations.  Converges quickly because
+            # each round locks at least one more region.
+            for _ in range(len(tr.regional_production)):
+                excess = 0.0
+                new_constrained = False
+                for region, prod in tr.regional_production.items():
+                    if region in constrained:
+                        continue
+                    prev = prev_prod.get(region, 0.0)
+                    if prev <= 0:
+                        continue
+                    floor = prev * (1.0 - max_decline_rate)
+                    if prod < floor:
+                        excess += floor - prod
+                        tr.regional_production[region] = floor
+                        constrained.add(region)
+                        new_constrained = True
+
+                if excess > 0:
+                    unconstrained_total = sum(
+                        tr.regional_production[r]
+                        for r in tr.regional_production
+                        if r not in constrained
+                    )
+                    if unconstrained_total > excess:
+                        scale = (unconstrained_total - excess) / unconstrained_total
+                        for region in tr.regional_production:
+                            if region not in constrained:
+                                tr.regional_production[region] *= scale
+
+                if not new_constrained:
+                    break
+
+            # Recompute net exports in place
+            for region in tr.regional_production:
+                tr.net_exports[region] = (
+                    tr.regional_production[region] - tr.regional_demand.get(region, 0.0)
+                )
+
+    def record_regional_production(
+        self,
+        trade_results: dict[str, TradeResult],
+    ) -> None:
+        """Store current regional production for next period's smoothing."""
+        self.prev_regional_production = {
+            fuel: dict(trade_results[fuel].regional_production)
+            for fuel in TRADED_FUELS
+            if fuel in trade_results
+        }

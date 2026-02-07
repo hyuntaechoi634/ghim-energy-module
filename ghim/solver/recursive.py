@@ -64,6 +64,7 @@ class PeriodResult:
     world_prices: dict[str, float] = field(default_factory=dict)
     net_exports_ej: dict[str, float] = field(default_factory=dict)
     domestic_production_ej: dict[str, float] = field(default_factory=dict)
+    calibration_rents: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -514,7 +515,8 @@ def _solve_regions_for_period(
         TRADE_DEMAND_DAMP,
         TRADE_DEMAND_TOL,
         OBSERVED_FUEL_PRICES_2020,
-        TRADE_TRANSITION_YEARS,
+        TRADE_MAX_PRICE_CHANGE,
+        TRADE_MAX_PROD_DECLINE,
     )
     from ghim.energy.trade import TradeResult
 
@@ -566,11 +568,40 @@ def _solve_regions_for_period(
                     supply = trade_module.regional_supplies.get(region, {}).get(fuel)
                     if supply is not None:
                         supply.cumulative_extracted += base_prod * TIMESTEP
+
+            # Seed prev_world_prices from observed so the first projection
+            # period has a reference for price smoothing.
+            if year == BASE_YEAR:
+                trade_module.prev_world_prices = dict(OBSERVED_FUEL_PRICES_2020)
+                # Seed prev_regional_production from base-year data so the
+                # first projection period has a reference for production smoothing.
+                for fuel in TRADED_FUELS:
+                    trade_module.prev_regional_production[fuel] = {
+                        r: DEFAULT_PRIMARY_ENERGY.get(r, {}).get(fuel, 0.0)
+                        for r in R10_REGIONS
+                    }
         else:
             # Projection periods: iterate demand estimation ↔ trade clearing.
             prev_world_prices: dict[str, float] = {}
             prev_demands: dict[str, dict[str, float]] | None = None
             converged = False
+
+            # Bootstrap calibration rents at the first projection period:
+            # run a preliminary clearing (with rent=0) to get extraction-cost
+            # prices, then compute rents = observed − cleared.  All subsequent
+            # solve_trade() calls automatically include the rents as adders.
+            if not trade_module.calibration_rents:
+                prelim_demands: dict[str, dict[str, float]] = {}
+                for region in R10_REGIONS:
+                    pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
+                    overrides = trade_prices_by_region.get(region)
+                    prelim_demands[region] = compute_primary_fuel_demand(
+                        region_models[region], pop, year, policy,
+                        price_overrides=overrides,
+                    )
+                prelim_results = trade_module.solve_trade(prelim_demands)
+                if prelim_results is not None:
+                    trade_module.calibrate_rents(prelim_results, OBSERVED_FUEL_PRICES_2020)
 
             for trade_iter in range(TRADE_DEMAND_MAX_ITER):
                 # Step 1: Estimate primary fuel demands per region
@@ -646,23 +677,24 @@ def _solve_regions_for_period(
                             trade_results, region
                         )
 
-    # --- Trade price transition blending ---
-    # In early projection periods, blend observed→trade-cleared world prices
-    # to smooth the transition from calibrated prices to model-determined prices.
+    # --- Inter-period price smoothing ---
+    # Rents are now incorporated directly into market clearing (via
+    # price_adder in solve_trade), so world_price already includes rent.
+    # We only need to clamp inter-period changes and record prices.
     if (trade_module is not None and trade_module.enabled
-            and year > BASE_YEAR and trade_results is not None
-            and TRADE_TRANSITION_YEARS > 0):
-        w = min(1.0, (year - BASE_YEAR) / TRADE_TRANSITION_YEARS)
-        if w < 1.0:
-            for fuel in TRADED_FUELS:
-                obs = OBSERVED_FUEL_PRICES_2020[fuel]
-                cleared = trade_results[fuel].world_price
-                trade_results[fuel].world_price = (1 - w) * obs + w * cleared
-            # Recompute delivered prices from blended world prices
-            for region in R10_REGIONS:
-                trade_prices_by_region[region] = trade_module.delivered_prices(
-                    trade_results, region
-                )
+            and year > BASE_YEAR and trade_results is not None):
+        # Clamp inter-period price changes
+        trade_module.smooth_prices(trade_results, TRADE_MAX_PRICE_CHANGE)
+        # Clamp per-region production declines
+        trade_module.smooth_production(trade_results, TRADE_MAX_PROD_DECLINE)
+        # Store for next period
+        trade_module.record_world_prices(trade_results)
+        trade_module.record_regional_production(trade_results)
+        # Recompute delivered prices from smoothed world prices
+        for region in R10_REGIONS:
+            trade_prices_by_region[region] = trade_module.delivered_prices(
+                trade_results, region
+            )
 
     # Step 3/4: Solve each region with trade-determined (or default) prices
     period_results: list[PeriodResult] = []
@@ -677,6 +709,8 @@ def _solve_regions_for_period(
             result.world_prices = {f: trade_results[f].world_price for f in TRADED_FUELS}
             result.net_exports_ej = {f: trade_results[f].net_exports.get(region, 0.0) for f in TRADED_FUELS}
             result.domestic_production_ej = {f: trade_results[f].regional_production.get(region, 0.0) for f in TRADED_FUELS}
+            if trade_module is not None:
+                result.calibration_rents = dict(trade_module.calibration_rents)
 
         period_results.append(result)
 

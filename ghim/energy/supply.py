@@ -79,17 +79,32 @@ class ResourceSupply:
     def production_at_price(self, price: float) -> float:
         """Producible amount (EJ) at given price.
 
-        Returns the sum of remaining resource in all grades whose
-        extraction cost is at or below ``price``, capped by
-        ``max_annual_production`` if set.
+        Uses GCAM-style piecewise-linear interpolation between grade
+        boundaries so the supply response is continuous.  Between two
+        successive grade costs the upper grade's contribution ramps
+        linearly from 0 to its full remaining amount, eliminating the
+        step-function discontinuities that cause solver oscillation.
+
+        Capped by ``max_annual_production`` if set.
         """
         total = 0.0
         cumul = 0.0
         eps = 1e-6  # floating-point tolerance for grade cost comparison
-        for grade in self.grades:
-            if grade.extraction_cost <= price + eps:
-                remaining = max(0, grade.available - max(0, self.cumulative_extracted - cumul))
+        for i, grade in enumerate(self.grades):
+            remaining = max(0, grade.available - max(0, self.cumulative_extracted - cumul))
+            if price >= grade.extraction_cost - eps:
                 total += remaining
+            else:
+                # Linear interpolation: ramp from 0 at prev_cost to full
+                # at this grade's cost.  For the first grade (i==0) the
+                # "previous cost" is 0, matching GCAM's convention that
+                # supply ramps continuously from zero.
+                prev_cost = self.grades[i - 1].extraction_cost if i > 0 else 0.0
+                span = grade.extraction_cost - prev_cost
+                if span > 0 and price > prev_cost:
+                    fraction = (price - prev_cost) / span
+                    total += remaining * max(0.0, fraction)
+                break
             cumul += grade.available
         if self.max_annual_production > 0:
             total = min(total, self.max_annual_production)

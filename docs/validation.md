@@ -87,20 +87,20 @@ Base-year energy values are representative defaults, not actual IEA energy balan
 - Total primary energy and final demand are within ~10% of IEA values.
 - Sector-level fuel splits are stylized (especially the nested demand tree subsector shares).
 
-### No AEEI
+### AEEI via policy module
 
-GHIM does not include autonomous energy efficiency improvement (AEEI). In practice, energy intensity (EJ per dollar of GDP) has declined historically at ~1-2% per year. Without AEEI, GHIM's energy demand may grow faster than models that include it. The income elasticities ($\epsilon < 1$) partially compensate but do not fully capture efficiency trends.
+AEEI (autonomous energy efficiency improvement) is available through the policy module's `efficiency_standards` but is not enabled by default. Without AEEI, energy intensity (EJ per dollar of GDP) does not decline historically at the observed ~1-2% per year. The income elasticities ($\epsilon < 1$) partially compensate but do not fully capture efficiency trends.
 
-### No carbon pricing
+### Carbon pricing and policy
 
-GHIM does not implement carbon pricing or emissions constraints. This means:
-- The model cannot reproduce policy scenarios (e.g., SSP1-2.6 or SSP2-4.5).
-- The fossil-to-renewable transition is driven only by cost competition and preference decay, not by policy signals.
-- Emissions trajectories may be higher than in models with integrated climate policy.
+Carbon pricing, renewable subsidies, technology share constraints, and emissions caps are available through the policy module (`ghim/policy.py`). Scenario files in `scenarios/` configure these. Without active policy, the fossil-to-renewable transition is driven only by cost competition and preference decay.
 
-### No trade
+### Trade limitations
 
-Regions are modeled independently — there is no energy trade, technology transfer, or capital flows between regions. Each region has its own fuel prices, technology deployment, and capital stock.
+Inter-regional trade is implemented for coal, oil, and gas via grade-based supply curves with global market clearing. Key limitations:
+- Production caps at 3× base-year production may bind for fast-growing demand scenarios, producing a transition period with mild price dynamics.
+- Supply curves are static (no resource depletion tracking between periods).
+- No trade in electricity, hydrogen, or manufactured goods.
 
 ## Cross-Model Comparison
 
@@ -158,4 +158,4 @@ python -m ghim.run --scenario SSP2
 python -m pytest ghim/tests/ -v
 ```
 
-All 40 tests should pass, confirming numerical correctness of individual components.
+All 114 tests should pass, confirming numerical correctness of individual components (including trade module tests).

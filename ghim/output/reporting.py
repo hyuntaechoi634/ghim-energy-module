@@ -38,6 +38,7 @@ def results_to_dataframe(results: list[PeriodResult]) -> pd.DataFrame:
             base[f"world_price_{fuel}_usd_gj"] = r.world_prices.get(fuel, 0.0)
             base[f"net_exports_{fuel}_ej"] = r.net_exports_ej.get(fuel, 0.0)
             base[f"domestic_production_{fuel}_ej"] = r.domestic_production_ej.get(fuel, 0.0)
+            base[f"calibration_rent_{fuel}_usd_gj"] = r.calibration_rents.get(fuel, 0.0)
         # Electricity generation by tech
         for tech, ej in r.electricity_gen_ej.items():
             base[f"elec_{tech}_ej"] = ej

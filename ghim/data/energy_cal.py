@@ -86,16 +86,16 @@ DEFAULT_PRIMARY_ENERGY: dict[str, dict[str, float]] = {
 }
 
 DEFAULT_ELEC_SHARES: dict[str, dict[str, float]] = {
-    "North America":        {"coal": 0.20, "gas": 0.40, "nuclear": 0.20, "hydro": 0.07, "wind": 0.08, "solar": 0.03, "biomass": 0.01, "oil": 0.01},
-    "Europe":               {"coal": 0.15, "gas": 0.20, "nuclear": 0.25, "hydro": 0.12, "wind": 0.15, "solar": 0.06, "biomass": 0.06, "oil": 0.01},
-    "Asia-Pacific Developed":{"coal": 0.25, "gas": 0.30, "nuclear": 0.15, "hydro": 0.08, "wind": 0.04, "solar": 0.08, "biomass": 0.05, "oil": 0.05},
-    "Eurasia":              {"coal": 0.15, "gas": 0.45, "nuclear": 0.18, "hydro": 0.18, "wind": 0.01, "solar": 0.005, "biomass": 0.01, "oil": 0.015},
-    "Eastern Asia":         {"coal": 0.62, "gas": 0.03, "nuclear": 0.05, "hydro": 0.17, "wind": 0.06, "solar": 0.04, "biomass": 0.02, "oil": 0.01},
-    "Southern Asia":        {"coal": 0.70, "gas": 0.04, "nuclear": 0.03, "hydro": 0.10, "wind": 0.05, "solar": 0.05, "biomass": 0.02, "oil": 0.01},
-    "South-East Asia and developing Pacific": {"coal": 0.35, "gas": 0.30, "nuclear": 0.02, "hydro": 0.10, "wind": 0.02, "solar": 0.02, "biomass": 0.05, "oil": 0.14},
-    "Middle East":          {"coal": 0.01, "gas": 0.65, "nuclear": 0.005, "hydro": 0.02, "wind": 0.005, "solar": 0.01, "biomass": 0.0, "oil": 0.30},
-    "Latin America and Caribbean": {"coal": 0.05, "gas": 0.20, "nuclear": 0.02, "hydro": 0.55, "wind": 0.08, "solar": 0.03, "biomass": 0.05, "oil": 0.02},
-    "Africa":               {"coal": 0.30, "gas": 0.30, "nuclear": 0.02, "hydro": 0.18, "wind": 0.03, "solar": 0.02, "biomass": 0.03, "oil": 0.12},
+    "North America":        {"coal": 0.20, "gas_cc": 0.40, "nuclear": 0.20, "hydro": 0.07, "wind": 0.08, "solar": 0.03, "biomass": 0.01, "oil": 0.01},
+    "Europe":               {"coal": 0.15, "gas_cc": 0.20, "nuclear": 0.25, "hydro": 0.12, "wind": 0.15, "solar": 0.06, "biomass": 0.06, "oil": 0.01},
+    "Asia-Pacific Developed":{"coal": 0.25, "gas_cc": 0.30, "nuclear": 0.15, "hydro": 0.08, "wind": 0.04, "solar": 0.08, "biomass": 0.05, "oil": 0.05},
+    "Eurasia":              {"coal": 0.15, "gas_cc": 0.45, "nuclear": 0.18, "hydro": 0.18, "wind": 0.01, "solar": 0.005, "biomass": 0.01, "oil": 0.015},
+    "Eastern Asia":         {"coal": 0.62, "gas_cc": 0.03, "nuclear": 0.05, "hydro": 0.17, "wind": 0.06, "solar": 0.04, "biomass": 0.02, "oil": 0.01},
+    "Southern Asia":        {"coal": 0.70, "gas_cc": 0.04, "nuclear": 0.03, "hydro": 0.10, "wind": 0.05, "solar": 0.05, "biomass": 0.02, "oil": 0.01},
+    "South-East Asia and developing Pacific": {"coal": 0.35, "gas_cc": 0.30, "nuclear": 0.02, "hydro": 0.10, "wind": 0.02, "solar": 0.02, "biomass": 0.05, "oil": 0.14},
+    "Middle East":          {"coal": 0.01, "gas_cc": 0.65, "nuclear": 0.005, "hydro": 0.02, "wind": 0.005, "solar": 0.01, "biomass": 0.0, "oil": 0.30},
+    "Latin America and Caribbean": {"coal": 0.05, "gas_cc": 0.20, "nuclear": 0.02, "hydro": 0.55, "wind": 0.08, "solar": 0.03, "biomass": 0.05, "oil": 0.02},
+    "Africa":               {"coal": 0.30, "gas_cc": 0.30, "nuclear": 0.02, "hydro": 0.18, "wind": 0.03, "solar": 0.02, "biomass": 0.03, "oil": 0.12},
 }
 
 DEFAULT_ELEC_TOTAL_EJ: dict[str, float] = {

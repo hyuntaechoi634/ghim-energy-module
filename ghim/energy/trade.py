@@ -106,6 +106,20 @@ class GlobalMarket:
                 break
             prev_cost = cost
 
+        # If no grade has enough supply (demand exceeds max capacity),
+        # use a scarcity premium rather than jumping to price_hi.
+        # Price = highest_grade_cost × (demand/max_supply) ensures a smooth
+        # signal that rises with excess demand, enabling convergence.
+        if world_price >= price_hi and grade_costs:
+            highest_cost = grade_costs[-1]
+            max_supply = sum(
+                s.production_at_price(highest_cost)
+                for s in self.regional_supplies.values()
+            )
+            if max_supply > 0:
+                scarcity_ratio = total_demand / max_supply  # > 1.0
+                world_price = min(highest_cost * scarcity_ratio, price_hi)
+
         # Fine-tune via bisection between previous grade and this one,
         # but ONLY if there's a price between prev_cost and world_price
         # where supply transitions smoothly (multiple regions/grades).

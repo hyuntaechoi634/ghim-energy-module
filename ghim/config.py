@@ -145,6 +145,16 @@ TRADE_DEMAND_DAMP: float = 0.5         # damping for price updates between itera
 TRADE_DEMAND_TOL: float = 0.02         # 2% relative price convergence for demand loop
 GCAM3_TO_2020_DEFLATOR: float = 3.79   # 1975$ → 2020$ GDP deflator (BEA 105.381/27.800)
 
+# Observed 2020 fossil fuel prices (2020$/GJ) from BP Statistical Review
+# via input/gcamdata/inst/extdata/energy/A10.rsrc_info_fossils.csv
+# Converted: oil $41.84/bbl ÷ 6.193 GJ/bbl, coal avg($69.01,$50.13)/tonne ÷ 34.12 GJ/t,
+# gas $4.06/mmBtu ÷ 1.055 GJ/mmBtu. These are world (extraction) prices, not delivered.
+OBSERVED_FUEL_PRICES_2020: dict[str, float] = {
+    "coal": 1.75,   # $/GJ
+    "oil": 6.76,    # $/GJ
+    "gas": 3.85,    # $/GJ
+}
+
 # ---------------------------------------------------------------------------
 # Carbon coefficients (tC per GJ of fuel input)
 # Source: IPCC defaults, approximated

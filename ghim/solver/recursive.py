@@ -488,82 +488,162 @@ def _solve_regions_for_period(
     year: int,
     policy: "PolicyScenario",
     trade_module: "TradeModule | None" = None,
-) -> list[PeriodResult]:
+    prev_trade_prices: dict[str, dict[str, float]] | None = None,
+) -> tuple[list["PeriodResult"], dict[str, dict[str, float]]]:
     """Solve all regions for one period, with optional trade clearing.
 
     Iterates demand estimation and trade clearing until prices converge,
     preventing cobweb oscillation when demand exceeds supply capacity.
 
-    Returns list of PeriodResult for the period.
+    Parameters
+    ----------
+    prev_trade_prices : dict, optional
+        Cleared trade prices from the previous period, used to warm-start
+        the demand-trade iteration so it begins near the converged solution
+        rather than from default fuel prices.
+
+    Returns
+    -------
+    tuple of (list[PeriodResult], dict mapping region → fuel → price)
+        The period results and the final cleared trade prices (empty dict
+        if trade is disabled).
     """
     from ghim.config import (
         TRADED_FUELS,
         TRADE_DEMAND_MAX_ITER,
         TRADE_DEMAND_DAMP,
         TRADE_DEMAND_TOL,
+        OBSERVED_FUEL_PRICES_2020,
     )
+    from ghim.energy.trade import TradeResult
 
     trade_results = None
-    trade_prices_by_region: dict[str, dict[str, float]] = {}
+    # Warm-start from previous period's cleared prices so the iteration
+    # begins near the converged solution instead of from default prices.
+    trade_prices_by_region: dict[str, dict[str, float]] = (
+        {r: dict(p) for r, p in prev_trade_prices.items()}
+        if prev_trade_prices else {}
+    )
 
     if trade_module is not None and trade_module.enabled:
-        # Iterate demand estimation ↔ trade clearing until prices converge
-        prev_world_prices: dict[str, float] = {}
-
-        for trade_iter in range(TRADE_DEMAND_MAX_ITER):
-            # Step 1: Estimate primary fuel demands per region
-            # On first iteration, use rm.fuel_prices (no overrides).
-            # On subsequent iterations, feed back the trade-cleared prices.
-            regional_demands: dict[str, dict[str, float]] = {}
+        if year <= BASE_YEAR:
+            # Historical periods: use observed prices, skip market clearing.
+            # This prevents artificially low supply-curve prices from
+            # distorting GDP in early periods.
             for region in R10_REGIONS:
-                pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
-                overrides = trade_prices_by_region.get(region)
-                demands = compute_primary_fuel_demand(
-                    region_models[region], pop, year, policy,
-                    price_overrides=overrides,
-                )
-                regional_demands[region] = demands
-
-            # Step 2: Clear global markets → world prices
-            trade_results = trade_module.solve_trade(regional_demands)
-
-            # Step 3: Compute delivered prices per region
-            new_prices_by_region: dict[str, dict[str, float]] = {}
-            if trade_results is not None:
-                for region in R10_REGIONS:
-                    new_prices_by_region[region] = trade_module.delivered_prices(
-                        trade_results, region
+                trade_prices_by_region[region] = {}
+                for fuel in TRADED_FUELS:
+                    tc = trade_module.transport_costs.get(fuel, {}).get(region, 0.5)
+                    trade_prices_by_region[region][fuel] = (
+                        OBSERVED_FUEL_PRICES_2020[fuel] + tc
                     )
 
-            # Step 4: Check convergence
-            if prev_world_prices and trade_results is not None:
-                max_change = 0.0
-                for fuel in TRADED_FUELS:
-                    old_p = prev_world_prices.get(fuel, 0.0)
-                    new_p = trade_results[fuel].world_price
-                    if old_p > 0:
-                        max_change = max(max_change, abs(new_p - old_p) / old_p)
-                if max_change < TRADE_DEMAND_TOL:
-                    trade_prices_by_region = new_prices_by_region
-                    break
-
-            # Step 5: Damped update of trade prices for next iteration
-            if trade_prices_by_region and new_prices_by_region:
+            # Synthetic trade results for metadata (production ≈ demand,
+            # net exports ≈ 0, world prices = observed).
+            trade_results = {}
+            for fuel in TRADED_FUELS:
+                regional_prod: dict[str, float] = {}
+                regional_dem: dict[str, float] = {}
                 for region in R10_REGIONS:
-                    for fuel in TRADED_FUELS:
-                        old_p = trade_prices_by_region[region].get(fuel, 0.0)
-                        new_p = new_prices_by_region[region].get(fuel, old_p)
-                        trade_prices_by_region[region][fuel] = (
-                            old_p + TRADE_DEMAND_DAMP * (new_p - old_p)
-                        )
-            else:
-                trade_prices_by_region = new_prices_by_region
+                    base_prod = DEFAULT_PRIMARY_ENERGY.get(region, {}).get(fuel, 0.0)
+                    regional_prod[region] = base_prod
+                    regional_dem[region] = base_prod
+                trade_results[fuel] = TradeResult(
+                    fuel=fuel,
+                    world_price=OBSERVED_FUEL_PRICES_2020[fuel],
+                    regional_production=regional_prod,
+                    regional_demand=regional_dem,
+                    net_exports={r: 0.0 for r in R10_REGIONS},
+                )
 
-            # Record world prices for convergence check
-            if trade_results is not None:
-                prev_world_prices = {
-                    f: trade_results[f].world_price for f in TRADED_FUELS
-                }
+            # Update depletion based on base-year production rates so that
+            # by the first projection period the supply curves reflect
+            # historical extraction.
+            for region in R10_REGIONS:
+                for fuel in TRADED_FUELS:
+                    base_prod = DEFAULT_PRIMARY_ENERGY.get(region, {}).get(fuel, 0.0)
+                    supply = trade_module.regional_supplies.get(region, {}).get(fuel)
+                    if supply is not None:
+                        supply.cumulative_extracted += base_prod * TIMESTEP
+        else:
+            # Projection periods: iterate demand estimation ↔ trade clearing.
+            prev_world_prices: dict[str, float] = {}
+            prev_demands: dict[str, dict[str, float]] | None = None
+            converged = False
+
+            for trade_iter in range(TRADE_DEMAND_MAX_ITER):
+                # Step 1: Estimate primary fuel demands per region
+                regional_demands: dict[str, dict[str, float]] = {}
+                for region in R10_REGIONS:
+                    pop = float(pop_df.loc[region, year]) if year in pop_df.columns else 100.0
+                    overrides = trade_prices_by_region.get(region)
+                    demands = compute_primary_fuel_demand(
+                        region_models[region], pop, year, policy,
+                        price_overrides=overrides,
+                    )
+                    regional_demands[region] = demands
+
+                # Step 2: Clear global markets → world prices
+                trade_results = trade_module.solve_trade(regional_demands)
+
+                # Step 3: Compute delivered prices per region
+                new_prices_by_region: dict[str, dict[str, float]] = {}
+                if trade_results is not None:
+                    for region in R10_REGIONS:
+                        new_prices_by_region[region] = trade_module.delivered_prices(
+                            trade_results, region
+                        )
+
+                # Step 4: Check convergence
+                if prev_world_prices and trade_results is not None:
+                    max_change = 0.0
+                    for fuel in TRADED_FUELS:
+                        old_p = prev_world_prices.get(fuel, 0.0)
+                        new_p = trade_results[fuel].world_price
+                        if old_p > 0:
+                            max_change = max(max_change, abs(new_p - old_p) / old_p)
+                    if max_change < TRADE_DEMAND_TOL:
+                        trade_prices_by_region = new_prices_by_region
+                        converged = True
+                        break
+
+                # Step 5: Damped update of trade prices for next iteration
+                if trade_prices_by_region and new_prices_by_region:
+                    for region in R10_REGIONS:
+                        for fuel in TRADED_FUELS:
+                            old_p = trade_prices_by_region[region].get(fuel, 0.0)
+                            new_p = new_prices_by_region[region].get(fuel, old_p)
+                            trade_prices_by_region[region][fuel] = (
+                                old_p + TRADE_DEMAND_DAMP * (new_p - old_p)
+                            )
+                else:
+                    trade_prices_by_region = new_prices_by_region
+
+                # Record for convergence check and oscillation averaging
+                if trade_results is not None:
+                    prev_world_prices = {
+                        f: trade_results[f].world_price for f in TRADED_FUELS
+                    }
+                prev_demands = regional_demands
+
+            # If iteration didn't converge (oscillating between grade boundaries),
+            # average the last two demand estimates and do a final clearing.
+            # This produces a smooth result between the two oscillating states.
+            if not converged and prev_demands is not None:
+                avg_demands: dict[str, dict[str, float]] = {}
+                for region in R10_REGIONS:
+                    avg_demands[region] = {}
+                    for fuel in ["coal", "oil", "gas"]:
+                        d1 = prev_demands[region].get(fuel, 0.0)
+                        d2 = regional_demands[region].get(fuel, 0.0)
+                        avg_demands[region][fuel] = (d1 + d2) / 2.0
+                trade_results = trade_module.solve_trade(avg_demands)
+                if trade_results is not None:
+                    trade_prices_by_region = {}
+                    for region in R10_REGIONS:
+                        trade_prices_by_region[region] = trade_module.delivered_prices(
+                            trade_results, region
+                        )
 
     # Step 3/4: Solve each region with trade-determined (or default) prices
     period_results: list[PeriodResult] = []
@@ -583,10 +663,11 @@ def _solve_regions_for_period(
 
     # Update resource depletion: increment cumulative extraction so
     # cheaper grades deplete over time, causing prices to rise.
-    if trade_results is not None and trade_module is not None:
+    # (Historical periods handle depletion directly above, so skip here.)
+    if trade_results is not None and trade_module is not None and year > BASE_YEAR:
         trade_module.update_depletion(trade_results, timestep=TIMESTEP)
 
-    return period_results
+    return period_results, trade_prices_by_region
 
 
 def run_model(
@@ -653,6 +734,7 @@ def run_model(
 
     # Solve period by period
     all_results: list[PeriodResult] = []
+    prev_trade_prices: dict[str, dict[str, float]] | None = None
     for year in MODEL_YEARS:
         # Check if emissions cap requires bisection on carbon price
         cap_active = policy.emissions_cap.has_cap(year)
@@ -681,8 +763,9 @@ def run_model(
                 trial_models = {r: copy.deepcopy(saved_states[r]) for r in R10_REGIONS}
                 trial_trade = copy.deepcopy(saved_trade) if saved_trade else None
 
-                trial_results = _solve_regions_for_period(
+                trial_results, _ = _solve_regions_for_period(
                     trial_models, gdp_df, pop_df, year, cap_policy, trial_trade,
+                    prev_trade_prices,
                 )
 
                 total_emissions = sum(r.emissions_mtco2 for r in trial_results)
@@ -708,14 +791,16 @@ def run_model(
             if saved_trade:
                 trade_module = copy.deepcopy(saved_trade)
 
-            period_results = _solve_regions_for_period(
+            period_results, prev_trade_prices = _solve_regions_for_period(
                 region_models, gdp_df, pop_df, year, final_policy, trade_module,
+                prev_trade_prices,
             )
             all_results.extend(period_results)
         else:
             # Normal solve (with or without trade)
-            period_results = _solve_regions_for_period(
+            period_results, prev_trade_prices = _solve_regions_for_period(
                 region_models, gdp_df, pop_df, year, policy, trade_module,
+                prev_trade_prices,
             )
             all_results.extend(period_results)
 

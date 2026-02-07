@@ -149,7 +149,7 @@ GCAM3_TO_2020_DEFLATOR: float = 3.79   # 1975$ → 2020$ GDP deflator (BEA 105.3
 CARBON_COEFS: dict[str, float] = {
     "coal": 0.0257,           # ~94.6 kgCO2/GJ → 25.8 kgC/GJ
     "gas": 0.0153,            # ~56.1 kgCO2/GJ → 15.3 kgC/GJ
-    "refined liquids": 0.0200, # ~73.3 kgCO2/GJ → 20.0 kgC/GJ
+    "refined liquids": 0.0,    # emissions at refining stage (avoid double-count)
     "biomass": 0.0,           # carbon neutral (biogenic)
     "nuclear": 0.0,
     "hydro": 0.0,

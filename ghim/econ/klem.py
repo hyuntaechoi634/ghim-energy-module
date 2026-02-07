@@ -110,6 +110,10 @@ class KLEMDriver:
             a = y_ssp / kl if kl > 0 else self.tfp
             self._tfp_trajectory[year] = a
 
+        # Set initial capital stock to K(HISTORY_START) so the solver
+        # starts from the correct historical capital, not K(BASE_YEAR).
+        self.capital_stock = k_hist[HISTORICAL_YEARS[0]]
+
         # Future years: forward-evolve K from BASE_YEAR
         k_ref = self.capital_stock  # K(BASE_YEAR)
         for year in FUTURE_YEARS:

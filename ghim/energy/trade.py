@@ -240,6 +240,24 @@ class TradeModule:
             results[fuel] = self._markets[fuel].clear_market(demands)
         return results
 
+    def update_depletion(
+        self,
+        trade_results: dict[str, TradeResult],
+        timestep: int = 5,
+    ) -> None:
+        """Update cumulative extraction after a period.
+
+        Increments each region's ``cumulative_extracted`` by its
+        production × timestep so that cheaper grades deplete over time,
+        causing marginal costs and world prices to rise.
+        """
+        for fuel in TRADED_FUELS:
+            tr = trade_results[fuel]
+            for region, production in tr.regional_production.items():
+                supply = self.regional_supplies.get(region, {}).get(fuel)
+                if supply is not None:
+                    supply.cumulative_extracted += production * timestep
+
     def delivered_prices(
         self,
         trade_results: dict[str, TradeResult],

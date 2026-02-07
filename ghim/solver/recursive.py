@@ -312,8 +312,15 @@ def solve_period(
         if max_change < PRICE_TOL:
             break
 
-    # Store updated prices
+    # Store updated prices.
+    # Reset traded fuel prices to defaults so next period's demand estimation
+    # starts from reference prices rather than carrying forward trade-cleared
+    # prices (which cause inter-period cobweb oscillation). The inter-period
+    # price signal comes through resource depletion, not stored prices.
     rm.fuel_prices = dict(prices)
+    defaults = _default_fuel_prices()
+    for fuel in ["coal", "oil", "gas"]:
+        rm.fuel_prices[fuel] = defaults[fuel]
 
     # 4. Compute energy cost and net output
     carrier_prices_arr = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
@@ -573,6 +580,11 @@ def _solve_regions_for_period(
             result.domestic_production_ej = {f: trade_results[f].regional_production.get(region, 0.0) for f in TRADED_FUELS}
 
         period_results.append(result)
+
+    # Update resource depletion: increment cumulative extraction so
+    # cheaper grades deplete over time, causing prices to rise.
+    if trade_results is not None and trade_module is not None:
+        trade_module.update_depletion(trade_results, timestep=TIMESTEP)
 
     return period_results
 

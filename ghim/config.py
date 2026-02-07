@@ -9,8 +9,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parents[1]
-GCAMDATA_EXT = REPO_ROOT / "input" / "gcamdata" / "inst" / "extdata"
+GHIM_DATA_EXT = Path(__file__).resolve().parent / "data" / "external"
 
 # ---------------------------------------------------------------------------
 # Time horizon
@@ -35,6 +34,7 @@ LABOR_FORCE_PARTICIPATION: float = 0.65  # fraction of population as labor
 CAPITAL_SHARE: float = 0.3          # alpha in K^alpha * L^(1-alpha)
 SAVINGS_RATE: float = 0.22          # fraction of net output saved
 INVESTMENT_CAP_RATE: float = 0.10   # max annual investment as fraction of K
+CAPITAL_OUTPUT_RATIO: float = 3.0   # K/Y ratio for base-year capital calibration
 
 # ---------------------------------------------------------------------------
 # CES elasticities (KLEM nesting, WITCH-inspired defaults)

@@ -71,7 +71,7 @@ GHIM uses the **AR6 10-region (R10)** classification from the IPCC Sixth Assessm
 | South-East Asia and developing Pacific | Indonesia, Thailand, Vietnam, Philippines, ... |
 | Southern Asia | India, Pakistan, Bangladesh, ... |
 
-The mapping file is at `mapping/region_classification.tsv` with columns: `ISO`, `name`, `region_ar6_10`.
+The mapping file is at `ghim/data/external/region_classification.tsv` with columns: `ISO`, `name`, `region_ar6_10`.
 
 ## Model Architecture
 

@@ -6,7 +6,7 @@ GHIM reads two categories of input data:
 
 ### 1. SSP scenario data (population and GDP)
 
-**Source file**: `input/gcamdata/inst/extdata/socioeconomics/SSP/SSP_database_2024.csv.gz`
+**Source file**: `ghim/data/external/ssp/SSP_database_2024.csv.gz`
 
 This is the IIASA SSP database (v3.0.1) containing country-level projections for 5 Shared Socioeconomic Pathways:
 
@@ -22,7 +22,7 @@ This is the IIASA SSP database (v3.0.1) containing country-level projections for
 
 ### 2. Region mapping
 
-**Source file**: `mapping/region_classification.tsv`
+**Source file**: `ghim/data/external/region_classification.tsv`
 
 Tab-separated file with columns:
 - `ISO`: ISO 3166-1 alpha-3 country code (e.g., `USA`, `CHN`, `IND`)
@@ -44,14 +44,14 @@ SSP country name → ISO code → AR6 R10 region
 The SSP database uses country names (e.g., "United States", "China"). These are mapped to ISO codes using the GCAM mapping file:
 
 ```
-input/gcamdata/inst/extdata/socioeconomics/SSP/iso_SSP_regID.csv
+ghim/data/external/ssp/iso_SSP_regID.csv
 ```
 
 This file provides a `ssp_country_name` → `iso` mapping.
 
 ### Step 2: ISO code to R10 region
 
-ISO codes are mapped directly to AR6 R10 regions using `mapping/region_classification.tsv`:
+ISO codes are mapped directly to AR6 R10 regions using `ghim/data/external/region_classification.tsv`:
 
 ```
 USA → North America
@@ -77,7 +77,7 @@ $$
 X(t) = X(t-\Delta t) \cdot g^{\Delta t}, \quad g = \left(\frac{X(2100)}{X(2090)}\right)^{1/10}
 $$
 
-This extrapolation is applied per-region independently for both population and GDP. For historical years (2000–2015) that may not be in the SSP database, the nearest available year is used as a backfill.
+This extrapolation is applied per-region independently for both population and GDP. For historical years (2000–2015), real observed data from the "Historical Reference" scenario in the SSP database is used instead of backfilling from SSP projections.
 
 **Implementation**: `ghim/data/ssp.py` — function `_extrapolate_beyond()`.
 

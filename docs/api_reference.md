@@ -45,7 +45,7 @@ This page provides a summary of all public modules, classes, and functions in th
 **`R10_REGIONS`** — list of 10 AR6 region names.
 
 **`load_region_mapping() → DataFrame`**
-: Load the ISO → R10 mapping from `mapping/region_classification.tsv`.
+: Load the ISO → R10 mapping from `ghim/data/external/region_classification.tsv`.
 
 **`build_iso_to_r10() → dict[str, str]`**
 : Return a dictionary mapping ISO alpha-3 codes to R10 region names.

@@ -1,6 +1,6 @@
 # Audit: Input Data Loading & Processing
 
-**Scope**: `ghim/data/ssp.py`, `ghim/data/energy_cal.py`, `ghim/data/loader.py`, `ghim/regions.py`, `mapping/region_classification.tsv`
+**Scope**: `ghim/data/ssp.py`, `ghim/data/energy_cal.py`, `ghim/data/loader.py`, `ghim/regions.py`, `ghim/data/external/region_classification.tsv`
 
 **Date**: 2026-02-06
 
@@ -21,7 +21,7 @@
 ## Data Flow Overview
 
 ```
-SSP_database_2024.csv.gz          mapping/region_classification.tsv
+SSP_database_2024.csv.gz          ghim/data/external/region_classification.tsv
        |                                    |
   _load_ssp_raw()                   build_iso_to_r10()
   (filter Pop & GDP|PPP)            (ISO -> R10 dict)
@@ -53,7 +53,7 @@ SSP_database_2024.csv.gz          mapping/region_classification.tsv
 
 Minimal utility module (39 lines). Three functions:
 
-- **`read_gcam_csv(rel_path)`** (line 12): Reads CSV relative to `GCAMDATA_EXT` with `comment="#"`. No error handling — a `FileNotFoundError` propagates with a raw system path.
+- **`read_gcam_csv(rel_path)`** (line 12): Reads CSV relative to `GHIM_DATA_EXT` with `comment="#"`. No error handling — a `FileNotFoundError` propagates with a raw system path.
 
 - **`load_iso_gcam_mapping()`** (line 26): Loads `iso_GCAM_regID.csv`. Returns `[iso, country_name, GCAM_region_ID]`. This is used for GCAM R32 mapping, **not** for GHIM's direct R10 path.
 
@@ -66,7 +66,7 @@ Minimal utility module (39 lines). Three functions:
 Region definitions (62 lines). Clean and correct.
 
 - **`R10_REGIONS`** (line 17): Canonical list of 10 AR6 R10 region names. Used as the index for all DataFrames.
-- **`build_iso_to_r10()`** (line 53): Reads `mapping/region_classification.tsv`, returns `{ISO_code: R10_region}`. This is the authoritative mapping.
+- **`build_iso_to_r10()`** (line 53): Reads `ghim/data/external/region_classification.tsv`, returns `{ISO_code: R10_region}`. This is the authoritative mapping.
 - **`build_country_to_r10()`** (line 44): Same file, maps country name to R10. Not used in the SSP pipeline.
 
 **No issues found** in this file.
@@ -164,49 +164,15 @@ The `reindex` with `fill_value=0.0` produces a DataFrame of all zeros for every 
 - `compute_gross_output()` → `1.0 * 0.0^0.3 * 0.0^0.7 = 0.0`
 - Model runs producing zero GDP, zero energy demand for all periods
 
-**Recommended fix**:
-```python
-# In load_ssp_data(), after line 107:
-df = raw[raw["Scenario"] == scenario].copy()
-if df.empty:
-    valid = sorted(raw["Scenario"].unique())
-    raise ValueError(
-        f"SSP scenario '{scenario}' not found in database. "
-        f"Valid scenarios: {valid}"
-    )
-```
+**Status**: RESOLVED — `load_ssp_data()` now raises `ValueError` with available scenario names when an invalid scenario is passed.
 
 ---
 
-### Issue 2: All SSPs Identical 2000-2020
+### Issue 2: All SSPs Identical 2000-2020 — RESOLVED
 
-**Severity**: MEDIUM
+**Severity**: ~~MEDIUM~~ → RESOLVED
 
-**Location**: SSP database structure + `ssp.py:113-136`
-
-**Root cause**: The SSP database (`SSP_database_2024.csv.gz`) contains year columns starting at `"2005"`. The years 2000-2004 are not in the database. All five SSP scenarios share the same historical values for 2005-2020 (they diverge from ~2020 onward).
-
-**How the code handles it**:
-
-At line 114, the code looks for year columns matching `MODEL_YEARS` (which starts at 2000):
-```python
-all_year_cols = [str(y) for y in MODEL_YEARS]
-available_cols = [c for c in all_year_cols if c in df.columns]
-```
-
-The year `"2000"` is not in the CSV, so it's not in `available_cols`. Then at lines 128-135:
-```python
-for y in MODEL_YEARS:
-    if y not in agg.columns:
-        nearest = min(existing, key=lambda x: abs(x - y)) if existing else None
-        if nearest is not None:
-            agg[y] = agg[nearest]
-```
-Year 2000 gets filled with the nearest available year (2005).
-
-**Impact**: For the historical period (2000-2020), all SSP scenarios produce identical population and GDP values. This is correct behavior (historical data is shared), but a developer reading the output might be surprised that SSP1 and SSP3 are identical before 2020.
-
-**Not a bug**: This is expected behavior given the SSP framework design. Document for developer awareness.
+**Resolution**: Historical data (2000–2015) is now sourced from the "Historical Reference" scenario in the SSP database, which contains real observed GDP and population. SSP scenario projections are used from BASE_YEAR (2020) onward. This means all SSP scenarios correctly share the same observed historical values before 2020 and diverge afterward.
 
 ---
 
@@ -216,7 +182,7 @@ Year 2000 gets filled with the nearest available year (2005).
 
 **Location**: `ssp.py` mapping chain (lines 24-42, 110-111)
 
-**Root cause**: `mapping/region_classification.tsv` contains ~250 ISO codes (territories, dependencies, small island nations) that do not appear in the SSP database. These territories have valid ISO→R10 mappings but no population or GDP data in the SSP CSV.
+**Root cause**: `ghim/data/external/region_classification.tsv` contains ~250 ISO codes (territories, dependencies, small island nations) that do not appear in the SSP database. These territories have valid ISO→R10 mappings but no population or GDP data in the SSP CSV.
 
 **What happens**: At line 110-111:
 ```python
@@ -282,7 +248,7 @@ def read_gcam_csv(rel_path: str, **kwargs) -> pd.DataFrame:
     return pd.read_csv(full_path, comment="#", **kwargs)
 ```
 
-**Root cause**: `pd.read_csv` raises `FileNotFoundError` with a raw path string. The error message shows the full system path to `GCAMDATA_EXT`, which may be confusing to users who don't know the expected directory structure.
+**Root cause**: `pd.read_csv` raises `FileNotFoundError` with a raw path string. The error message shows the full system path to `GHIM_DATA_EXT`, which may be confusing to users who don't know the expected directory structure.
 
 Similarly, `_load_ssp_raw()` at `ssp.py:18-19`:
 ```python
@@ -312,9 +278,9 @@ def read_gcam_csv(rel_path: str, **kwargs) -> pd.DataFrame:
 
 | Value | Source | Location | Notes |
 |-------|--------|----------|-------|
-| SSP database path | Hardcoded relative | `ssp.py:18` | `socioeconomics/SSP/SSP_database_2024.csv.gz` |
-| ISO-SSP mapping path | Hardcoded relative | `ssp.py:32` | `socioeconomics/SSP/iso_SSP_regID.csv` |
-| Region mapping path | Config constant | `regions.py:33` | `REPO_ROOT / "mapping" / "region_classification.tsv"` |
+| SSP database path | Hardcoded relative | `ssp.py:18` | `GHIM_DATA_EXT / "ssp" / "SSP_database_2024.csv.gz"` |
+| ISO-SSP mapping path | Hardcoded relative | `ssp.py:32` | `GHIM_DATA_EXT / "ssp" / "iso_SSP_regID.csv"` |
+| Region mapping path | Config constant | `regions.py:33` | `GHIM_DATA_EXT / "region_classification.tsv"` |
 | R10 region names | Hardcoded list | `regions.py:17-28` | 10 canonical names |
 | Primary energy (EJ) | Hardcoded dict | `energy_cal.py:76-87` | Approximate IEA 2020 values |
 | Elec shares | Hardcoded dict | `energy_cal.py:89-100` | Must sum to 1.0 per region |

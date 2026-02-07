@@ -21,6 +21,9 @@ ghim = "ghim.run:main"
 [tool.setuptools.packages.find]
 include = ["ghim*"]
 
+[tool.setuptools.package-data]
+"ghim.data.external" = ["**/*"]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"

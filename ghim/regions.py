@@ -1,6 +1,6 @@
 """R10 region definitions using AR6 10-region classification.
 
-Mapping source: mapping/region_classification.tsv (ISO → AR6 R10 direct).
+Mapping source: ghim/data/external/region_classification.tsv (ISO → AR6 R10 direct).
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ghim.config import REPO_ROOT
+from ghim.config import GHIM_DATA_EXT
 
 # ---------------------------------------------------------------------------
 # AR6 R10 region names (canonical order)
@@ -30,7 +30,7 @@ R10_REGIONS: list[str] = [
 NUM_REGIONS: int = len(R10_REGIONS)
 
 # Path to the region classification mapping file
-_MAPPING_FILE = REPO_ROOT / "mapping" / "region_classification.tsv"
+_MAPPING_FILE = GHIM_DATA_EXT / "region_classification.tsv"
 
 
 def load_region_mapping() -> pd.DataFrame:

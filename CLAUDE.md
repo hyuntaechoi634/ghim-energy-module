@@ -133,7 +133,7 @@ cd docs && sphinx-build -b html . _build/html          # Build docs
 - **Stock turnover**: Gradual technology transition with sector-specific turnover times
 - **Learning curves** (WITCH-style): Experience curves for solar, wind, electrolysis, etc.
 - **Nested demand**: Industry (heavy/light/data centers), buildings (residential/commercial), transport (passenger/freight)
-- **10 AR6 R10 regions**, direct ISO→R10 mapping via `mapping/region_classification.tsv`
+- **10 AR6 R10 regions**, direct ISO→R10 mapping via `ghim/data/external/region_classification.tsv`
 
 ### Module Structure
 ```
@@ -142,7 +142,7 @@ ghim/
 ├── econ/klem.py       # DICE production function, capital accumulation
 ├── energy/            # Electricity (8 tech), hydrogen, refining, demand trees
 ├── solver/recursive.py # Period-by-period solver with endogenous GDP
-├── data/ssp.py        # SSP loading with 2150 extrapolation
+├── data/ssp.py        # SSP loading with historical merge + 2150 extrapolation
 └── output/reporting.py # CSV export, summary tables
 ```
 
@@ -150,4 +150,4 @@ ghim/
 - `pyproject.toml` is at **repo root**, not inside `ghim/`
 - User manages git themselves — do NOT auto-commit
 - CLAUDE.md is NOT auto-updated — only edit when explicitly asked
-- Use `mapping/region_classification.tsv` for direct ISO→R10 (NOT GCAM R32)
+- Use `ghim/data/external/region_classification.tsv` for direct ISO→R10 (NOT GCAM R32)

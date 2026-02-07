@@ -6,20 +6,20 @@ from pathlib import Path
 
 import pandas as pd
 
-from ghim.config import GCAMDATA_EXT
+from ghim.config import GHIM_DATA_EXT
 
 
 def read_gcam_csv(rel_path: str, **kwargs) -> pd.DataFrame:
-    """Read a GCAM-style CSV file (with ``#`` comment header) from extdata.
+    """Read a GCAM-style CSV file (with ``#`` comment header) from external data.
 
     Parameters
     ----------
     rel_path : str
-        Path relative to ``input/gcamdata/inst/extdata/``.
+        Path relative to ``ghim/data/external/``.
     **kwargs
         Forwarded to :func:`pandas.read_csv`.
     """
-    full_path = GCAMDATA_EXT / rel_path
+    full_path = GHIM_DATA_EXT / rel_path
     return pd.read_csv(full_path, comment="#", **kwargs)
 
 

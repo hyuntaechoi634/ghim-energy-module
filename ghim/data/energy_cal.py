@@ -5,14 +5,13 @@ the GCAM energy sector structure.  Actual base-year energy balance values
 (EJ by region/sector/fuel) come from pre-processed IEA data or will be
 populated with representative defaults when IEA proprietary data is unavailable.
 
-Region keys use AR6 R10 names from mapping/region_classification.tsv.
+Region keys use AR6 R10 names from ghim/data/external/region_classification.tsv.
 """
 
 from __future__ import annotations
 
 import pandas as pd
 
-from ghim.config import GCAMDATA_EXT
 from ghim.data.loader import read_gcam_csv
 
 
@@ -28,7 +27,7 @@ def load_calibrated_techs() -> pd.DataFrame:
 
 def load_fuel_mappings() -> pd.DataFrame:
     """Load IEA product -> GCAM fuel mapping."""
-    return read_gcam_csv("energy/mappings/IEA_product_fuel.csv")
+    return read_gcam_csv("energy/IEA_product_fuel.csv")
 
 
 def get_electricity_techs() -> pd.DataFrame:

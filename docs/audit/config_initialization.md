@@ -451,8 +451,7 @@ Every constant in `config.py` with its usage status:
 
 | Parameter | Value | Used? | Used In |
 |-----------|-------|-------|---------|
-| `REPO_ROOT` | `Path(...)` | YES | `regions.py`, `config.py` |
-| `GCAMDATA_EXT` | `Path(...)` | YES | `loader.py`, `ssp.py`, `energy_cal.py` |
+| `GHIM_DATA_EXT` | `Path(...)` | YES | `regions.py`, `loader.py`, `ssp.py` |
 | `HISTORY_START` | `2000` | YES | `config.py` (derives `HISTORICAL_YEARS`) |
 | `BASE_YEAR` | `2020` | YES | `ssp.py`, `klem.py`, `recursive.py` |
 | `END_YEAR` | `2150` | YES | `config.py` (derives `FUTURE_YEARS`) |

@@ -42,7 +42,7 @@ GHIM maps countries to R10 regions **directly** using ISO 3166-1 alpha-3 codes. 
 The mapping file is:
 
 ```
-mapping/region_classification.tsv
+ghim/data/external/region_classification.tsv
 ```
 
 with three columns:
@@ -63,7 +63,7 @@ $$
 \text{SSP country name} \xrightarrow{\text{iso\_SSP\_regID.csv}} \text{ISO code} \xrightarrow{\text{region\_classification.tsv}} \text{R10 region}
 $$
 
-The first step uses the SSP-provided ISO mapping file (`iso_SSP_regID.csv`); the second uses GHIM's direct ISO-to-R10 mapping. This two-step chain is handled by `_build_ssp_country_to_r10()` in [`ghim/data/ssp.py`](../ghim/data/ssp.py).
+The first step uses the SSP-provided ISO mapping file (`ghim/data/external/ssp/iso_SSP_regID.csv`); the second uses GHIM's direct ISO-to-R10 mapping. This two-step chain is handled by `_build_ssp_country_to_r10()` in [`ghim/data/ssp.py`](../ghim/data/ssp.py).
 
 ## Data Aggregation
 
@@ -116,4 +116,4 @@ The base-year (2020) energy balance for each region is specified in `DEFAULT_PRI
 
 The global total final energy demand is approximately 340 EJ, and total primary energy approximately 543 EJ. The difference reflects conversion losses in electricity generation, refining, and other transformation sectors.
 
-**Implementation**: [`ghim/regions.py`](../ghim/regions.py), [`ghim/data/ssp.py`](../ghim/data/ssp.py), [`mapping/region_classification.tsv`](../mapping/region_classification.tsv).
+**Implementation**: [`ghim/regions.py`](../ghim/regions.py), [`ghim/data/ssp.py`](../ghim/data/ssp.py), [`ghim/data/external/region_classification.tsv`](../ghim/data/external/region_classification.tsv).

@@ -14,8 +14,9 @@ from __future__ import annotations
 from ghim.config import (
     SIGMA_EM,
     CAPITAL_SHARE, SAVINGS_RATE, INVESTMENT_CAP_RATE,
+    CAPITAL_OUTPUT_RATIO,
     DEPRECIATION_RATE, LABOR_FORCE_PARTICIPATION,
-    TIMESTEP, BASE_YEAR, MODEL_YEARS,
+    TIMESTEP, BASE_YEAR, MODEL_YEARS, HISTORICAL_YEARS, FUTURE_YEARS,
 )
 
 
@@ -47,8 +48,8 @@ class KLEMDriver:
         self.base_population = base_population
         self.base_energy = base_energy_demand_ej
 
-        # Capital stock (K/Y ratio ≈ 3)
-        self.capital_stock = base_gdp * 3.0
+        # Capital stock (K/Y ratio from config)
+        self.capital_stock = base_gdp * CAPITAL_OUTPUT_RATIO
 
         # Labor
         self.labor = base_population * LABOR_FORCE_PARTICIPATION
@@ -71,13 +72,57 @@ class KLEMDriver:
     ) -> None:
         """Pre-compute TFP so that Y_model ≈ Y_SSP without energy shocks.
 
-        Simulates a reference K path (assuming full savings of gross output)
-        and backs out A(t) at each period.
+        Two-step algorithm:
+        1. **Backward K solve** — invert capital accumulation from K(BASE_YEAR)
+           back through historical years to get K(HISTORY_START).
+        2. **Forward TFP calibration** — starting from K(HISTORY_START), evolve K
+           forward and back out A(t) = Y_SSP / (K^α * L^(1-α)) at each period.
         """
-        k_ref = self.capital_stock
+        decay = (1.0 - DEPRECIATION_RATE) ** TIMESTEP
+
+        # --- Step 1: backward solve for historical K ---
+        # historical_years_desc = [2015, 2010, 2005, 2000] (reverse, excluding BASE_YEAR)
+        historical_years_desc = list(reversed(HISTORICAL_YEARS[:-1]))
+        k_hist: dict[int, float] = {BASE_YEAR: self.capital_stock}
+
+        k_next = self.capital_stock
+        for year in historical_years_desc:
+            y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
+            inv = min(self.savings_rate * y_ssp, self.investment_cap_rate * k_next)
+            # K(t) = (K(t+dt) - I * dt) / decay
+            k_prev = (k_next - inv * TIMESTEP) / decay
+            # Floor: K cannot be less than 1% of GDP
+            k_prev = max(k_prev, 0.01 * y_ssp)
+            k_hist[year] = k_prev
+            k_next = k_prev
+
+        # --- Step 2: TFP calibration ---
         self._tfp_trajectory = {}
 
-        for year in MODEL_YEARS:
+        # Historical years: use backward-solved K directly
+        for year in HISTORICAL_YEARS:
+            y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
+            pop = pop_by_year.get(year, self.base_population)
+            labor = pop * LABOR_FORCE_PARTICIPATION
+            k_ref = k_hist[year]
+
+            kl = k_ref ** self.alpha * labor ** (1.0 - self.alpha)
+            a = y_ssp / kl if kl > 0 else self.tfp
+            self._tfp_trajectory[year] = a
+
+        # Future years: forward-evolve K from BASE_YEAR
+        k_ref = self.capital_stock  # K(BASE_YEAR)
+        for year in FUTURE_YEARS:
+            # Evolve K first (using previous period's Y_SSP)
+            prev_year = year - TIMESTEP
+            y_prev = ssp_gdp_by_year.get(prev_year, self.base_gdp)
+            inv_ref = min(
+                self.savings_rate * y_prev,
+                self.investment_cap_rate * k_ref,
+            )
+            k_ref = decay * k_ref + inv_ref * TIMESTEP
+
+            # Calibrate TFP
             y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
             pop = pop_by_year.get(year, self.base_population)
             labor = pop * LABOR_FORCE_PARTICIPATION
@@ -85,14 +130,6 @@ class KLEMDriver:
             kl = k_ref ** self.alpha * labor ** (1.0 - self.alpha)
             a = y_ssp / kl if kl > 0 else self.tfp
             self._tfp_trajectory[year] = a
-
-            # Evolve reference K (no energy shock)
-            inv_ref = min(
-                self.savings_rate * y_ssp,
-                self.investment_cap_rate * k_ref,
-            )
-            decay = (1.0 - DEPRECIATION_RATE) ** TIMESTEP
-            k_ref = decay * k_ref + inv_ref * TIMESTEP
 
     def set_tfp_for_year(self, year: int) -> None:
         """Set current TFP from pre-computed trajectory."""

@@ -12,10 +12,12 @@ import numpy as np
 from ghim.config import (
     ELEC_LOGIT_EXP, DISCOUNT_RATE, PREF_LOGIT_SCALE,
     TURNOVER_TIMES, TIMESTEP, HOURS_PER_YEAR,
+    LOGIT_EXP_PREF, PREF_DECAY_RATES, BASE_YEAR,
 )
 from ghim.energy.logit import (
     logit_shares, logit_calibrate,
     preference_logit, preference_calibrate,
+    relative_pref_logit,
 )
 from ghim.energy.stock import apply_stock_turnover
 from ghim.energy.technology import Technology, default_electricity_techs
@@ -62,8 +64,10 @@ class ElectricitySector:
             for t in self.techs
         ])
 
-        # Calibrate preference factors (MERGE-style)
-        self.pref_factors = preference_calibrate(shares_arr, costs_arr, self.scale_k)
+        # Calibrate preference factors (relative-pref mode)
+        self.pref_factors = preference_calibrate(
+            shares_arr, costs_arr, self.scale_k, logit_exp=self.logit_exp,
+        )
         self.base_pref_factors = self.pref_factors.copy()
 
         # Initialize stock shares to base-year
@@ -79,6 +83,29 @@ class ElectricitySector:
             if t.cumulative_capacity == 0.0:
                 t.cumulative_capacity = t.base_cumulative
 
+    def _compute_pref_factors(
+        self,
+        year: int | None,
+        pref_overrides: dict[str, float] | None = None,
+    ) -> np.ndarray:
+        """Compute per-tech preference factors for a given year.
+
+        Uses PF override if available, otherwise decays from base PF
+        using per-technology decay rates from ``PREF_DECAY_RATES``.
+        """
+        if self.base_pref_factors is None:
+            return np.zeros(len(self.techs))
+
+        years_elapsed = max((year or BASE_YEAR) - BASE_YEAR, 0)
+        pf = np.empty(len(self.techs))
+        for i, t in enumerate(self.techs):
+            if pref_overrides and t.name in pref_overrides:
+                pf[i] = pref_overrides[t.name]
+            else:
+                rate = PREF_DECAY_RATES.get(t.name, 0.0)
+                pf[i] = self.base_pref_factors[i] * (1.0 - rate) ** years_elapsed
+        return pf
+
     def compute_supply(
         self,
         fuel_prices: dict[str, float],
@@ -87,10 +114,12 @@ class ElectricitySector:
         cost_adjustments: dict[str, float] | None = None,
         share_constraints: list | None = None,
         year: int | None = None,
+        alpha: np.ndarray | None = None,
+        pref_overrides: dict[str, float] | None = None,
     ) -> dict[str, float]:
         """Compute electricity generation by technology.
 
-        Uses preference logit for target shares, then applies stock
+        Uses relative-pref logit for target shares, then applies stock
         turnover to blend with existing fleet.
 
         Parameters
@@ -100,7 +129,11 @@ class ElectricitySector:
         share_constraints : list, optional
             TechConstraint objects for min/max share bounds.
         year : int, optional
-            Current model year (needed for share constraints).
+            Current model year (needed for share constraints and PF decay).
+        alpha : ndarray, optional
+            Binary availability array {0,1} per technology.
+        pref_overrides : dict, optional
+            Tech name -> $/GJ explicit preference factor override.
         """
         costs = np.array([
             t.levelized_cost(fuel_prices.get(t.fuel_input, 3.0))
@@ -114,9 +147,13 @@ class ElectricitySector:
                 if adj > 0:
                     costs[i] = max(costs[i] - adj, 0.01)
 
-        # Compute target shares from preference logit
+        # Compute target shares from relative-pref logit
         if self.pref_factors is not None:
-            target_shares = preference_logit(costs, self.pref_factors, self.scale_k)
+            pf = self._compute_pref_factors(year, pref_overrides)
+            self.pref_factors = pf
+            target_shares = relative_pref_logit(
+                costs, pf, self.scale_k, self.logit_exp, alpha,
+            )
         else:
             weights = np.array([t.share_weight for t in self.techs])
             target_shares = logit_shares(costs, weights, self.logit_exp)
@@ -165,7 +202,9 @@ class ElectricitySector:
         if self.current_shares is not None:
             shares = self.current_shares
         elif self.pref_factors is not None:
-            shares = preference_logit(costs, self.pref_factors, self.scale_k)
+            shares = relative_pref_logit(
+                costs, self.pref_factors, self.scale_k, self.logit_exp,
+            )
         else:
             weights = np.array([t.share_weight for t in self.techs])
             shares = logit_shares(costs, weights, self.logit_exp)

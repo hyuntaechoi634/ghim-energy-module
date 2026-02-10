@@ -62,6 +62,24 @@ PREF_DECAY_RATE: float = 0.02       # annual decay rate for preference factors
 # (1-0.02)^5 = 0.904 → ~10% decay per 5-year period; halve in ~35 years
 
 # ---------------------------------------------------------------------------
+# Relative preference logit (new default mode)
+# s_i = α_i · exp(-k·P_i) · C_i^β / Σ_j α_j · exp(-k·P_j) · C_j^β
+# ---------------------------------------------------------------------------
+LOGIT_EXP_PREF: float = -4.0        # β for relative_pref_logit
+
+# Per-technology annual decay rates for preference factors.
+# Renewables/new tech decay faster (toward pure cost competition).
+# Conventional fuels decay = 0 (no built-in preference drift).
+PREF_DECAY_RATES: dict[str, float] = {
+    "solar": 0.03, "wind": 0.03,
+    "hydrogen": 0.03, "electrolysis": 0.03,
+    "electricity": 0.02, "biomass": 0.02,
+    "nuclear": 0.01, "refined liquids": 0.01,
+    "coal": 0.0, "gas": 0.0, "gas_cc": 0.0,
+    "hydro": 0.0, "oil": 0.0, "smr": 0.0,
+}
+
+# ---------------------------------------------------------------------------
 # Stock turnover times (years)
 # ---------------------------------------------------------------------------
 TURNOVER_TIMES: dict[str, float] = {
@@ -145,6 +163,11 @@ TRADE_DEMAND_DAMP: float = 0.5         # damping for price updates between itera
 TRADE_DEMAND_TOL: float = 0.02         # 2% relative price convergence for demand loop
 TRADE_MAX_PRICE_CHANGE: float = 0.30   # max fractional price change per period (30%)
 TRADE_MAX_PROD_DECLINE: float = 0.30   # max 30% production decline per region per period
+
+# ---------------------------------------------------------------------------
+# KLEM-Sector coupling (WITCH-style)
+# ---------------------------------------------------------------------------
+KLEM_SCALE_CLAMP: tuple[float, float] = (0.5, 2.0)  # min/max scale factor
 GCAM3_TO_2020_DEFLATOR: float = 3.79   # 1975$ → 2020$ GDP deflator (BEA 105.381/27.800)
 
 # Observed 2020 fossil fuel prices (2020$/GJ) from BP Statistical Review

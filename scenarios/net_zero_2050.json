@@ -31,5 +31,16 @@
       "trajectory": {"2030": 0.15, "2050": 0.30}
     }
   ],
-  "revenue_recycling": {"fraction": 0.5}
+  "revenue_recycling": {"fraction": 0.5},
+  "tech_availability": {
+    "schedules": {
+      "electricity.coal": {"2025": 1, "2045": 0},
+      "electricity.oil": {"2025": 1, "2035": 0}
+    }
+  },
+  "pref_overrides": {
+    "overrides": {
+      "demand.hydrogen": {"2025": 5.0, "2035": 2.0, "2050": 0.0}
+    }
+  }
 }

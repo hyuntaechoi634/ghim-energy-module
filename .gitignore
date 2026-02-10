@@ -89,3 +89,6 @@ docs/_build/
 
 # User-provided external data staging area
 /data/
+
+# Telegram bridge & hooks (contains secrets)
+connect/

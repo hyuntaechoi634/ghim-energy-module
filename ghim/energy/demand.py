@@ -31,11 +31,12 @@ import numpy as np
 
 from ghim.config import (
     DEMAND_LOGIT_EXP, BASE_YEAR, PREF_LOGIT_SCALE, TIMESTEP,
-    TURNOVER_TIMES,
+    TURNOVER_TIMES, LOGIT_EXP_PREF, PREF_DECAY_RATES,
 )
 from ghim.energy.logit import (
     logit_shares, logit_calibrate,
     preference_logit, preference_calibrate,
+    relative_pref_logit,
 )
 from ghim.energy.stock import apply_stock_turnover
 
@@ -91,11 +92,13 @@ class DemandNode:
         base_shares: dict[str, float],
         scale_k: float = PREF_LOGIT_SCALE,
         turnover_time: float = 30.0,
+        logit_exp: float = LOGIT_EXP_PREF,
     ):
         self.name = name
         self.children = children
         self.scale_k = scale_k
         self.turnover_time = turnover_time
+        self.logit_exp = logit_exp
 
         # Ordered child names
         self._child_names = [c.name for c in children]
@@ -131,22 +134,68 @@ class DemandNode:
                 child.calibrate(fuel_prices)
 
         costs = np.array([self._child_cost(c, fuel_prices) for c in self.children])
-        self.pref_factors = preference_calibrate(self._base_shares, costs, self.scale_k)
+        self.pref_factors = preference_calibrate(
+            self._base_shares, costs, self.scale_k, logit_exp=self.logit_exp,
+        )
         self.base_pref_factors = self.pref_factors.copy()
         self.current_shares = self._base_shares.copy()
+
+    def _compute_pref_factors(
+        self,
+        year: int | None,
+        pref_override_map: dict[str, float] | None = None,
+    ) -> np.ndarray:
+        """Compute per-child preference factors for a given year."""
+        if self.base_pref_factors is None:
+            return np.zeros(len(self.children))
+
+        years_elapsed = max((year or BASE_YEAR) - BASE_YEAR, 0)
+        pf = np.empty(len(self.children))
+        for i, child in enumerate(self.children):
+            if pref_override_map and child.name in pref_override_map:
+                pf[i] = pref_override_map[child.name]
+            else:
+                rate = PREF_DECAY_RATES.get(child.name, 0.0)
+                # For leaf nodes, try carrier name too
+                if isinstance(child, DemandLeaf) and rate == 0.0:
+                    rate = PREF_DECAY_RATES.get(child.carrier, 0.0)
+                pf[i] = self.base_pref_factors[i] * (1.0 - rate) ** years_elapsed
+        return pf
 
     def compute_carrier_demands(
         self,
         total_ej: float,
         fuel_prices: dict[str, float],
+        year: int | None = None,
+        alpha_map: dict[str, float] | None = None,
+        pref_override_map: dict[str, float] | None = None,
     ) -> dict[str, float]:
-        """Compute energy demands by carrier, recursing into children."""
+        """Compute energy demands by carrier, recursing into children.
+
+        Parameters
+        ----------
+        year : int, optional
+            Current model year for PF decay.
+        alpha_map : dict, optional
+            Child name -> 0.0/1.0 availability. Default 1.0 for all.
+        pref_override_map : dict, optional
+            Child name -> explicit $/GJ preference factor.
+        """
         # Child costs (using previous-period shares for branches)
         costs = np.array([self._child_cost(c, fuel_prices) for c in self.children])
 
-        # Target shares from preference logit
+        # Build alpha array
+        alpha = None
+        if alpha_map:
+            alpha = np.array([alpha_map.get(c.name, 1.0) for c in self.children])
+
+        # Target shares from relative-pref logit
         if self.pref_factors is not None:
-            target_shares = preference_logit(costs, self.pref_factors, self.scale_k)
+            pf = self._compute_pref_factors(year, pref_override_map)
+            self.pref_factors = pf
+            target_shares = relative_pref_logit(
+                costs, pf, self.scale_k, self.logit_exp, alpha,
+            )
         else:
             target_shares = self._base_shares
 
@@ -167,7 +216,10 @@ class DemandNode:
             if isinstance(child, DemandLeaf):
                 result[child.carrier] = result.get(child.carrier, 0.0) + child_ej
             else:
-                sub = child.compute_carrier_demands(child_ej, fuel_prices)
+                sub = child.compute_carrier_demands(
+                    child_ej, fuel_prices, year=year,
+                    alpha_map=alpha_map, pref_override_map=pref_override_map,
+                )
                 for k, v in sub.items():
                     result[k] = result.get(k, 0.0) + v
         return result
@@ -315,11 +367,23 @@ class FinalDemand:
         self,
         gdp: float,
         fuel_prices: dict[str, float],
+        year: int | None = None,
+        alpha_map: dict[str, float] | None = None,
+        pref_override_map: dict[str, float] | None = None,
     ) -> dict[str, float]:
         """Compute fuel demand by carrier for a given period.
 
         Total demand scales with GDP growth via income elasticity.
         Fuel allocation is determined by the nested logit tree.
+
+        Parameters
+        ----------
+        year : int, optional
+            Current model year for PF decay.
+        alpha_map : dict, optional
+            Child name -> 0.0/1.0 availability.
+        pref_override_map : dict, optional
+            Child name -> explicit $/GJ preference factor.
 
         Returns dict of carrier -> demand in EJ.
         """
@@ -329,4 +393,7 @@ class FinalDemand:
             gdp_ratio = 1.0
 
         total_demand = self.base_demand_ej * (gdp_ratio ** self.income_elasticity)
-        return self.tree.compute_carrier_demands(total_demand, fuel_prices)
+        return self.tree.compute_carrier_demands(
+            total_demand, fuel_prices, year=year,
+            alpha_map=alpha_map, pref_override_map=pref_override_map,
+        )

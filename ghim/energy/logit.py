@@ -94,6 +94,7 @@ def logit_shares(
     base_value: float = 1.0,
     pref_factors: np.ndarray = None,
     scale_k: float = None,
+    alpha: np.ndarray | None = None,
 ) -> np.ndarray:
     """Unified interface for logit share computation.
 
@@ -101,11 +102,12 @@ def logit_shares(
     ----------
     costs : array of shape (n,)
     share_weights : array (required for relative/absolute modes)
-    logit_exp : float (required for relative/absolute modes)
-    mode : {"relative", "absolute", "preference"}
+    logit_exp : float (required for relative/absolute/relative_pref modes)
+    mode : {"relative", "absolute", "preference", "relative_pref"}
     base_value : float (absolute mode only)
-    pref_factors : array (preference mode only)
-    scale_k : float (preference mode only)
+    pref_factors : array (preference and relative_pref modes)
+    scale_k : float (preference and relative_pref modes)
+    alpha : array (relative_pref mode only)
 
     Returns
     -------
@@ -118,6 +120,8 @@ def logit_shares(
         return relative_cost_logit(costs, share_weights, logit_exp)
     elif mode == "absolute":
         return absolute_cost_logit(costs, share_weights, logit_exp, base_value)
+    elif mode == "relative_pref":
+        return relative_pref_logit(costs, pref_factors, scale_k, logit_exp, alpha)
     else:
         raise ValueError(f"Unknown logit mode: {mode!r}")
 
@@ -209,14 +213,21 @@ def preference_calibrate(
     base_shares: np.ndarray,
     base_costs: np.ndarray,
     scale_k: float,
+    logit_exp: float | None = None,
 ) -> np.ndarray:
     """Calibrate preference factors from base-year shares (inverse logit).
 
-    From Share_i = exp(-k*(C_i + Pref_i)) / Z, pick reference tech r
-    (largest share) and set Pref_r = 0.  Then:
+    When *logit_exp* is ``None`` (default), calibrates for the absolute
+    preference logit (MERGE-style):
 
-        ln(S_i / S_r) = -k * ((C_i + Pref_i) - (C_r + 0))
-        Pref_i = (C_r - C_i) - ln(S_i / S_r) / k
+        ln(S_i / S_r) = -k * ((C_i + P_i) - (C_r + 0))
+        P_i = (C_r - C_i) - ln(S_i / S_r) / k
+
+    When *logit_exp* is given (e.g. -4.0), calibrates for the relative
+    preference logit:
+
+        ln(S_i / S_r) = β·(ln C_i − ln C_r) − k·(P_i − P_r)
+        P_i = -(β/k)·(ln C_i − ln C_r) − ln(S_i / S_r) / k
 
     Parameters
     ----------
@@ -226,6 +237,8 @@ def preference_calibrate(
         Observed costs in base year.
     scale_k : float
         Sensitivity parameter k > 0.
+    logit_exp : float, optional
+        If provided, calibrate for ``relative_pref_logit`` with this β.
 
     Returns
     -------
@@ -242,9 +255,91 @@ def preference_calibrate(
 
     ref = int(np.argmax(base_shares))
     log_ratio = np.log(base_shares / base_shares[ref])
-    pref = (base_costs[ref] - base_costs) - log_ratio / scale_k
+
+    if logit_exp is not None:
+        # Relative preference logit calibration
+        # From: ln(S_i/S_r) = -k*(P_i - P_r) + β*(ln C_i - ln C_r)
+        # With P_r = 0: P_i = (β/k)*(ln C_i - ln C_r) - (1/k)*ln(S_i/S_r)
+        base_costs = np.maximum(base_costs, 1e-10)
+        log_cost_diff = np.log(base_costs) - np.log(base_costs[ref])
+        pref = (logit_exp / scale_k) * log_cost_diff - log_ratio / scale_k
+    else:
+        # Absolute preference logit calibration (original MERGE-style)
+        pref = (base_costs[ref] - base_costs) - log_ratio / scale_k
+
     pref -= pref[ref]  # ensure reference = 0
     return pref
+
+
+def relative_pref_logit(
+    costs: np.ndarray,
+    pref_factors: np.ndarray,
+    scale_k: float,
+    logit_exp: float,
+    alpha: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compute market shares using relative cost logit with preference factors.
+
+    Combines GCAM-style relative cost competition with MERGE-style
+    preference adders and binary availability switches:
+
+        s_i = α_i · exp(-k·P_i) · C_i^β  /  Σ_j α_j · exp(-k·P_j) · C_j^β
+
+    In log-space:
+
+        log_unnorm_i = log(α_i) + (-k · P_i) + β · log(C_i)
+
+    where ``log(0) = -inf`` naturally zeroes out technologies with α=0.
+
+    Parameters
+    ----------
+    costs : array of shape (n,)
+        Levelized cost of each option ($/GJ).  Must be positive.
+    pref_factors : array of shape (n,)
+        Preference adder P_i for each option ($/GJ).
+        Positive = penalty (increases effective cost),
+        negative = bonus (decreases effective cost).
+    scale_k : float
+        Sensitivity parameter k > 0 for preference factors.
+    logit_exp : float
+        Relative cost exponent β.  Typically negative (e.g. -4.0).
+    alpha : array of shape (n,) or None
+        Binary availability switches {0, 1}.  None = all available.
+
+    Returns
+    -------
+    ndarray of shape (n,)
+        Market shares (sum to 1).
+    """
+    costs = np.asarray(costs, dtype=float)
+    pref_factors = np.asarray(pref_factors, dtype=float)
+    costs = np.maximum(costs, 1e-10)
+
+    if alpha is not None:
+        alpha = np.asarray(alpha, dtype=float)
+    else:
+        alpha = np.ones_like(costs)
+
+    # Log-space computation
+    # log(0) = -inf which naturally zeroes out disabled techs
+    with np.errstate(divide="ignore"):
+        log_alpha = np.where(alpha > 0, np.log(alpha), -np.inf)
+
+    log_unnorm = log_alpha + (-scale_k * pref_factors) + logit_exp * np.log(costs)
+
+    # Check if all -inf (all techs disabled)
+    finite_mask = np.isfinite(log_unnorm)
+    if not finite_mask.any():
+        # All technologies disabled — return uniform (degenerate case)
+        return np.ones_like(costs) / len(costs)
+
+    # Subtract max of finite values for numerical stability
+    log_unnorm -= log_unnorm[finite_mask].max()
+    unnorm = np.exp(log_unnorm)
+    total = unnorm.sum()
+    if total > 0:
+        return unnorm / total
+    return np.ones_like(costs) / len(costs)
 
 
 def preference_decay(

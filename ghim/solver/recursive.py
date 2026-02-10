@@ -17,6 +17,7 @@ from ghim.config import (
     MODEL_YEARS, BASE_YEAR, TIMESTEP,
     PRICE_TOL, MAX_PRICE_ITER, PRICE_DAMP,
     TC_TO_TCO2, CARBON_COEFS,
+    KLEM_SCALE_CLAMP,
 )
 from ghim.regions import R10_REGIONS
 from ghim.data.energy_cal import (
@@ -60,6 +61,8 @@ class PeriodResult:
     carbon_price_usd_tco2: float = 0.0  # active carbon price ($/tCO2)
     carbon_revenue_billion_usd: float = 0.0  # carbon revenue (billion USD)
     aeei_factor: float = 1.0            # cumulative efficiency factor
+    # KLEM-sector coupling
+    klem_scale_factor: float = 1.0        # KLEM/sector coupling scale factor
     # Trade fields
     world_prices: dict[str, float] = field(default_factory=dict)
     net_exports_ej: dict[str, float] = field(default_factory=dict)
@@ -225,6 +228,66 @@ def solve_period(
     elec_constraints = [tc for tc in policy.tech_constraints if tc.sector == "electricity"] or None
     h2_constraints = [tc for tc in policy.tech_constraints if tc.sector == "hydrogen"] or None
 
+    # --- Policy: tech availability (α) and pref factor overrides ---
+    import numpy as _np
+    elec_alpha = None
+    elec_pf_overrides: dict[str, float] | None = None
+    h2_alpha = None
+    h2_pf_overrides: dict[str, float] | None = None
+
+    if policy.tech_availability.schedules:
+        elec_alpha = _np.array([
+            1.0 if policy.tech_availability.is_available("electricity", t.name, year) else 0.0
+            for t in rm.electricity.techs
+        ])
+        h2_alpha = _np.array([
+            1.0 if policy.tech_availability.is_available("hydrogen", t.name, year) else 0.0
+            for t in rm.hydrogen.techs
+        ])
+
+    if policy.pref_overrides.overrides:
+        elec_pf_overrides = {}
+        for t in rm.electricity.techs:
+            ov = policy.pref_overrides.get_override("electricity", t.name, year)
+            if ov is not None:
+                elec_pf_overrides[t.name] = ov
+        if not elec_pf_overrides:
+            elec_pf_overrides = None
+
+        h2_pf_overrides = {}
+        for t in rm.hydrogen.techs:
+            ov = policy.pref_overrides.get_override("hydrogen", t.name, year)
+            if ov is not None:
+                h2_pf_overrides[t.name] = ov
+        if not h2_pf_overrides:
+            h2_pf_overrides = None
+
+    # Build demand-side α and PF override maps
+    demand_alpha_map: dict[str, float] | None = None
+    demand_pf_map: dict[str, float] | None = None
+
+    if policy.tech_availability.schedules:
+        demand_alpha_map = {}
+        for name in rm.demand_sectors:
+            # Check demand-level availability (keyed as "demand.<child_name>")
+            for key in policy.tech_availability.schedules:
+                if key.startswith("demand."):
+                    child_name = key.split(".", 1)[1]
+                    demand_alpha_map[child_name] = (
+                        1.0 if policy.tech_availability.is_available("demand", child_name, year) else 0.0
+                    )
+
+    if policy.pref_overrides.overrides:
+        demand_pf_map = {}
+        for key in policy.pref_overrides.overrides:
+            if key.startswith("demand."):
+                child_name = key.split(".", 1)[1]
+                ov = policy.pref_overrides.get_override("demand", child_name, year)
+                if ov is not None:
+                    demand_pf_map[child_name] = ov
+        if not demand_pf_map:
+            demand_pf_map = None
+
     # --- Policy: AEEI factor ---
     aeei_factor = policy.efficiency_standards.cumulative_factor("global", year, BASE_YEAR)
 
@@ -241,6 +304,7 @@ def solve_period(
 
     # 3. Price iteration loop
     total_energy = 0.0
+    klem_scale = 1.0
     final_demand = {}
     elec_gen = {}
     h2_gen = {}
@@ -251,50 +315,65 @@ def solve_period(
         carrier_prices = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
         energy_price_index = np.mean(carrier_prices) / np.mean(base_carrier_prices)
 
-        # 3b. Total energy demand from KLEM
+        # 3b. KLEM total energy (macro CES envelope + global AEEI)
         total_energy = rm.klem.compute_energy_demand(gdp_for_demand, energy_price_index)
-
-        # Apply AEEI to total energy demand
         total_energy *= aeei_factor
 
-        # 3c. Final demand by sector and carrier
-        final_demand = {}
-        total_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
+        # 3c. Raw sector demands (income-driven, for relative shares)
+        raw_sector_demands: dict[str, dict[str, float]] = {}
         for name, sector in rm.demand_sectors.items():
-            carrier_demand = sector.compute_demand(gdp_for_demand, prices)
+            carrier_demand = sector.compute_demand(
+                gdp_for_demand, prices, year=year,
+                alpha_map=demand_alpha_map, pref_override_map=demand_pf_map,
+            )
             # Apply per-sector AEEI
             sector_aeei = policy.efficiency_standards.cumulative_factor(name, year, BASE_YEAR)
             carrier_demand = {c: d * sector_aeei for c, d in carrier_demand.items()}
-            final_demand[name] = carrier_demand
-            for c, d in carrier_demand.items():
+            raw_sector_demands[name] = carrier_demand
+
+        # 3d. KLEM-sector coupling: scale sector demands to match KLEM total
+        sector_sum = sum(sum(cd.values()) for cd in raw_sector_demands.values())
+        klem_scale = total_energy / sector_sum if sector_sum > 0 else 1.0
+        klem_scale = max(KLEM_SCALE_CLAMP[0], min(klem_scale, KLEM_SCALE_CLAMP[1]))
+
+        final_demand = {}
+        total_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
+        for name, carrier_demand in raw_sector_demands.items():
+            scaled = {c: d * klem_scale for c, d in carrier_demand.items()}
+            final_demand[name] = scaled
+            for c, d in scaled.items():
                 total_by_carrier[c] = total_by_carrier.get(c, 0.0) + d
 
-        # 3d. Electricity supply (with subsidies + constraints)
+        # 3e. Electricity supply (with subsidies + constraints + α + PF)
         elec_demand = total_by_carrier.get("electricity", 5.0)
         elec_gen = rm.electricity.compute_supply(
             prices, elec_demand, years_from_base,
             cost_adjustments=elec_subsidies,
             share_constraints=elec_constraints,
             year=year,
+            alpha=elec_alpha,
+            pref_overrides=elec_pf_overrides,
         )
         new_elec_price = rm.electricity.weighted_cost(prices)
 
-        # 3e. Refined liquids supply
+        # 3f. Refined liquids supply
         liquids_demand = total_by_carrier.get("refined liquids", 5.0)
         ref_result = rm.refining.compute_supply(liquids_demand, prices.get("oil", 8.0))
         new_liquids_price = ref_result["cost_per_gj"]
 
-        # 3f. Hydrogen supply (with subsidies + constraints)
+        # 3g. Hydrogen supply (with subsidies + constraints + α + PF)
         h2_demand = total_by_carrier.get("hydrogen", 0.1)
         h2_gen = rm.hydrogen.compute_supply(
             prices, max(h2_demand, 0.01), years_from_base,
             cost_adjustments=h2_subsidies,
             share_constraints=h2_constraints,
             year=year,
+            alpha=h2_alpha,
+            pref_overrides=h2_pf_overrides,
         )
         new_h2_price = rm.hydrogen.weighted_cost(prices)
 
-        # 3g. Check price convergence and update
+        # 3h. Check price convergence and update
         new_prices = dict(prices)
         new_prices["electricity"] = new_elec_price
         new_prices["refined liquids"] = new_liquids_price
@@ -324,9 +403,11 @@ def solve_period(
         rm.fuel_prices[fuel] = defaults[fuel]
 
     # 4. Compute energy cost and net output
+    # Use actual scaled total (consistent when clamping activates)
+    actual_total = sum(total_by_carrier.values())
     carrier_prices_arr = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
     avg_price = np.mean(carrier_prices_arr)
-    energy_cost = KLEMDriver.compute_energy_cost(total_energy, avg_price)
+    energy_cost = KLEMDriver.compute_energy_cost(actual_total, avg_price)
 
     # 6. Compute emissions (before revenue recycling, which depends on emissions)
     elec_emissions = rm.electricity.emissions_mtc(elec_gen)
@@ -365,7 +446,7 @@ def solve_period(
         region=rm.name,
         gdp=net_output,
         population=population,
-        total_energy_demand_ej=total_energy,
+        total_energy_demand_ej=actual_total,
         electricity_gen_ej=elec_gen,
         electricity_price=prices["electricity"],
         refined_liquids_ej=total_by_carrier.get("refined liquids", 0.0),
@@ -383,6 +464,7 @@ def solve_period(
         carbon_price_usd_tco2=carbon_price,
         carbon_revenue_billion_usd=carbon_revenue,
         aeei_factor=aeei_factor,
+        klem_scale_factor=klem_scale,
     )
 
 
@@ -427,17 +509,23 @@ def compute_primary_fuel_demand(
     carrier_prices = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
     energy_price_index = np.mean(carrier_prices) / np.mean(base_carrier_prices)
 
-    # Total energy from KLEM
+    # Total energy from KLEM (macro CES envelope)
     aeei_factor = policy.efficiency_standards.cumulative_factor("global", year, BASE_YEAR)
-    total_energy = rm.klem.compute_energy_demand(gross_output, energy_price_index) * aeei_factor
+    klem_total = rm.klem.compute_energy_demand(gross_output, energy_price_index) * aeei_factor
 
-    # Final demand by carrier
-    total_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
+    # Raw sector demands by carrier
+    raw_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
     for name, sector in rm.demand_sectors.items():
         carrier_demand = sector.compute_demand(gross_output, prices)
         sector_aeei = policy.efficiency_standards.cumulative_factor(name, year, BASE_YEAR)
         for c, d in carrier_demand.items():
-            total_by_carrier[c] = total_by_carrier.get(c, 0.0) + d * sector_aeei
+            raw_by_carrier[c] = raw_by_carrier.get(c, 0.0) + d * sector_aeei
+
+    # KLEM-sector coupling
+    sector_sum = sum(raw_by_carrier.values())
+    klem_scale = klem_total / sector_sum if sector_sum > 0 else 1.0
+    klem_scale = max(KLEM_SCALE_CLAMP[0], min(klem_scale, KLEM_SCALE_CLAMP[1]))
+    total_by_carrier = {c: d * klem_scale for c, d in raw_by_carrier.items()}
 
     # Electricity sector fuel consumption
     elec_demand = total_by_carrier.get("electricity", 5.0)

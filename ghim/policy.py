@@ -126,6 +126,40 @@ class RevenueRecycling:
 
 
 @dataclass
+class TechAvailability:
+    """Binary α schedules: "sector.tech" -> {year: 0|1}.
+
+    Controls whether a technology is available (α=1) or disabled (α=0)
+    in each period.  Default = available for all unlisted technologies.
+    Interpolates between waypoints (rounds to 0 or 1).
+    """
+    schedules: dict[str, dict[int, int]] = field(default_factory=dict)
+
+    def is_available(self, sector: str, tech: str, year: int) -> bool:
+        key = f"{sector}.{tech}"
+        if key not in self.schedules:
+            return True
+        val = _interpolate(self.schedules[key], year)
+        return val >= 0.5
+
+
+@dataclass
+class PrefFactorOverride:
+    """Explicit P(t) trajectories: "sector.tech" -> {year: $/GJ}.
+
+    Overrides the default decay-based preference factor for specific
+    technologies.  Structured for future outer-loop SSP calibration.
+    """
+    overrides: dict[str, dict[int, float]] = field(default_factory=dict)
+
+    def get_override(self, sector: str, tech: str, year: int) -> float | None:
+        key = f"{sector}.{tech}"
+        if key not in self.overrides:
+            return None
+        return _interpolate(self.overrides[key], year)
+
+
+@dataclass
 class PolicyScenario:
     """Root policy container. All sub-policies default to no-op."""
     name: str = "none"
@@ -135,6 +169,8 @@ class PolicyScenario:
     emissions_cap: EmissionsCap = field(default_factory=EmissionsCap)
     tech_constraints: list[TechConstraint] = field(default_factory=list)
     revenue_recycling: RevenueRecycling = field(default_factory=RevenueRecycling)
+    tech_availability: TechAvailability = field(default_factory=TechAvailability)
+    pref_overrides: PrefFactorOverride = field(default_factory=PrefFactorOverride)
 
 
 # -----------------------------------------------------------------------
@@ -194,6 +230,22 @@ def load_policy(path: str | Path) -> PolicyScenario:
     if "revenue_recycling" in raw:
         rr = raw["revenue_recycling"]
         ps.revenue_recycling = RevenueRecycling(fraction=rr.get("fraction", 0.0))
+
+    # Tech availability (binary α schedules)
+    if "tech_availability" in raw:
+        ta = raw["tech_availability"]
+        schedules = {}
+        for key, traj in ta.get("schedules", {}).items():
+            schedules[key] = {int(k): int(v) for k, v in traj.items()}
+        ps.tech_availability = TechAvailability(schedules=schedules)
+
+    # Preference factor overrides
+    if "pref_overrides" in raw:
+        po = raw["pref_overrides"]
+        overrides = {}
+        for key, traj in po.get("overrides", {}).items():
+            overrides[key] = _int_keys(traj)
+        ps.pref_overrides = PrefFactorOverride(overrides=overrides)
 
     return ps
 

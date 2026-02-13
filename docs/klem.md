@@ -186,48 +186,163 @@ The effect is significant: Middle East (LFP=0.51) has 22% less effective labor t
 
 TFP is calibrated once at initialization to ensure that the model GDP matches the SSP projection **in the absence of energy shocks**. During simulation, TFP is fixed — GDP diverges from SSP only through the energy cost feedback loop.
 
-### 5.1 Why Calibrate TFP?
+### 5.1 What Is TFP and Why Calibrate It?
 
-TFP captures "everything else" — technology, institutions, governance, human capital — that explains GDP beyond K and L. By calibrating TFP from the SSP path, we:
+The production function is `VA = A × K^α × L^(1-α)`. We know three of the four variables from external data:
 
-1. Ensure the reference scenario tracks established SSP projections
-2. Attribute all non-KL growth to TFP (a standard decomposition)
-3. Isolate the energy cost feedback as the only source of GDP divergence
+- **Y_SSP** — GDP from SSP scenarios (what we want to reproduce)
+- **K** — Capital stock (computed from investment dynamics)
+- **L** — Labor force (population × regional LFP)
 
-### 5.2 The Two-Step Algorithm
-
-**Step 1: Backward K Solve (Historical Periods)**
-
-Starting from `K(2020)`, invert the capital accumulation equation backward through 2015, 2010, 2005, 2000:
-
-```
-K(t) = (K(t+dt) - I × dt) / (1 - δ)^dt
-```
-
-where `I = min(s × Y_SSP(t), cap_rate × K(t+dt))`.
-
-A floor of `0.01 × Y_SSP(t)` prevents negative capital. This produces historically consistent capital stocks: K(2000) < K(2005) < ... < K(2020).
-
-**Step 2: Forward TFP Calibration (All Periods)**
-
-With the full K trajectory, back out TFP at each period:
+So we can solve for the fourth:
 
 ```
 A(t) = Y_SSP(t) / (K(t)^α × L(t)^(1-α))
 ```
 
-- **Historical years** use backward-solved K directly
-- **Future years** evolve K forward from K(2020) using the standard accumulation law
+TFP captures "everything else" that explains GDP beyond K and L — technology, institutions, governance, human capital, resource allocation efficiency. By calibrating TFP from the SSP path, we:
 
-After calibration, the solver's capital stock is reset to K(2000) so the recursive solver starts from the correct historical position.
+1. Ensure the reference scenario tracks established SSP projections
+2. Attribute all non-KL growth to TFP (a standard Solow decomposition)
+3. Isolate the energy cost feedback as the **only** source of GDP divergence from SSP
 
-### 5.3 Properties of the Calibrated TFP
+### 5.2 The Chicken-and-Egg Problem
 
-- **Monotonically increasing** for growing GDP with constant population (typical SSP2/3)
-- **Historical TFP ≥ base-year TFP** (because K(history) < K(2020), so higher A is needed to explain the same GDP)
-- **No discontinuity** at the 2020→2025 boundary (both sides use K(2020) as anchor)
+To compute A(t) we need K(t). But K(t) depends on past investment, which depends on past GDP. We only know K at the base year:
 
-The last property is critical: an earlier bug used K(2000) for forward TFP calibration, producing a TFP spike at 2025 that caused a GDP surge.
+```
+K(2020) = GDP(2020) × 3.0 = 63,000 billion USD  (for North America)
+```
+
+What is K(2000)? K(2010)? K(2050)? We need to reconstruct the entire K trajectory from this single anchor point.
+
+### 5.3 The Two-Step Algorithm
+
+The solution is a two-pass algorithm: go backward from K(2020) to get historical K, then go forward to get future K.
+
+**Step 1: Backward K Solve (2020 → 2000)**
+
+The capital accumulation law is:
+
+```
+K(t+5) = 0.7738 × K(t) + I(t) × 5
+```
+
+where `0.7738 = (1-0.05)^5` is the 5-year decay factor. We can invert this:
+
+```
+K(t) = (K(t+5) - I(t) × 5) / 0.7738
+```
+
+Investment at each historical period uses SSP GDP:
+
+```
+I(t) = min(0.22 × Y_SSP(t), 0.10 × K(t+5))
+```
+
+Starting from K(2020) = 63,000, we walk backward:
+
+```
+K(2015) = (63,000 - min(0.22 × Y_SSP(2015), 0.10 × 63,000) × 5) / 0.7738
+K(2010) = (K(2015) - I(2010) × 5) / 0.7738
+...
+K(2000) = smallest (least capital in the past)
+```
+
+A floor of `0.01 × Y_SSP(t)` prevents negative capital. The result is a historically consistent capital trajectory: K(2000) < K(2005) < ... < K(2020).
+
+**Step 2: Forward TFP Calibration (2000 → 2150)**
+
+Now we have K at every year. For each period, back out TFP:
+
+```
+A(t) = Y_SSP(t) / (K(t)^0.3 × L(t)^0.7)
+```
+
+- **Historical years (2000–2020)**: Use the backward-solved K values directly
+- **Future years (2025–2150)**: Evolve K forward from K(2020) using the standard accumulation law:
+  ```
+  K(t+5) = 0.7738 × K(t) + I_ref(t) × 5
+  I_ref(t) = min(0.22 × Y_SSP(t), 0.10 × K(t))
+  ```
+
+**Reset**: After calibration, the solver's capital stock is reset to K(2000) so the recursive solver starts from the correct historical position and re-accumulates capital through 2000→2005→...→2150.
+
+### 5.4 Worked Example (North America, SSP2)
+
+Assume constant GDP = 21,000B and population = 370M for simplicity:
+
+```
+Base year (2020):
+  K(2020) = 21,000 × 3.0 = 63,000
+  L = 370 × 0.61 = 225.7
+  KL = 63,000^0.3 × 225.7^0.7 = 5,073.6
+  A(2020) = 21,000 / 5,073.6 = 4.14
+
+Backward solve to 2015:
+  I(2015) = min(0.22 × 21,000, 0.10 × 63,000) = min(4,620, 6,300) = 4,620
+  K(2015) = (63,000 - 4,620 × 5) / 0.7738 = (63,000 - 23,100) / 0.7738 = 51,565
+
+TFP at 2015:
+  KL = 51,565^0.3 × 225.7^0.7 = 4,716.5
+  A(2015) = 21,000 / 4,716.5 = 4.45   ← higher than A(2020) = 4.14 ✓
+
+Why? K(2015) < K(2020), so more TFP is needed to explain the same GDP.
+```
+
+For **future years** with growing GDP (e.g., Y_SSP grows 2%/year):
+
+```
+Forward K from 2020:
+  I_ref(2020) = min(0.22 × 21,000, 0.10 × 63,000) = 4,620
+  K(2025) = 0.7738 × 63,000 + 4,620 × 5 = 48,749 + 23,100 = 71,849
+
+TFP at 2025 (with Y_SSP = 23,178):
+  KL = 71,849^0.3 × 225.7^0.7 = 5,267.8
+  A(2025) = 23,178 / 5,267.8 = 4.40
+```
+
+The full TFP trajectory looks like:
+
+```
+Year:  2000   2005   2010   2015   2020   2025   2030   ...   2100
+A(t):  4.85   4.68   4.55   4.45   4.14   4.40   4.55   ...   5.30
+                                    ↑
+                              anchor point
+```
+
+Historical A > base A (less capital requires more productivity). Future A rises as GDP grows faster than K×L.
+
+### 5.5 Why the Anchor at 2020 Matters
+
+A critical design choice: **both backward and forward K trajectories use K(2020) as the anchor**.
+
+- Backward: starts from K(2020), walks back to K(2000)
+- Forward: starts from K(2020), walks forward to K(2150)
+
+This ensures **no discontinuity** at the 2020→2025 boundary. An earlier bug used K(2000) for forward calibration instead of K(2020), which produced an inflated K₀ → wrong TFP → GDP spike at the historical-to-future transition.
+
+### 5.6 What Happens During Simulation
+
+Once the TFP trajectory `{2000: 4.85, 2005: 4.68, ..., 2150: 5.30}` is computed, it is **frozen**. At each period, the solver looks up A(t) and uses it with the *current* (endogenous) K:
+
+```
+Reference case (no policy):
+  K evolves via standard accumulation → VA ≈ Y_SSP ✓  (by construction)
+
+Carbon tax case:
+  Energy cost ↑ → NetOutput ↓ → Investment ↓ → K grows slower
+  Same A(t), smaller K → VA < Y_SSP  (GDP drag from carbon tax)
+```
+
+The TFP trajectory acts as the "potential growth" path. The actual economy deviates from potential only through the energy cost → capital → GDP feedback loop — which is exactly what the model is designed to study.
+
+### 5.7 Properties of the Calibrated TFP
+
+- **Historical TFP ≥ base-year TFP** (less K in the past → higher A needed)
+- **Monotonically increasing in the future** for growing GDP with constant population
+- **No discontinuity** at the 2020→2025 boundary (both sides anchored at K(2020))
+- **Robust to SSP scenario**: works for SSP1 (fast growth), SSP3 (slow growth), etc.
 
 ---
 

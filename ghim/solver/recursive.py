@@ -17,7 +17,6 @@ from ghim.config import (
     MODEL_YEARS, BASE_YEAR, TIMESTEP,
     PRICE_TOL, MAX_PRICE_ITER, PRICE_DAMP,
     TC_TO_TCO2, CARBON_COEFS,
-    KLEM_SCALE_CLAMP,
 )
 from ghim.regions import R10_REGIONS
 from ghim.data.energy_cal import (
@@ -61,8 +60,11 @@ class PeriodResult:
     carbon_price_usd_tco2: float = 0.0  # active carbon price ($/tCO2)
     carbon_revenue_billion_usd: float = 0.0  # carbon revenue (billion USD)
     aeei_factor: float = 1.0            # cumulative efficiency factor
-    # KLEM-sector coupling
-    klem_scale_factor: float = 1.0        # KLEM/sector coupling scale factor
+    # CES-KLE coupling
+    energy_cost_share: float = 0.0        # P_E × E / Y (energy cost share of GDP)
+    # Vintage stock fields
+    new_investment_ej: dict[str, float] = field(default_factory=dict)
+    surviving_capacity_ej: dict[str, float] = field(default_factory=dict)
     # Trade fields
     world_prices: dict[str, float] = field(default_factory=dict)
     net_exports_ej: dict[str, float] = field(default_factory=dict)
@@ -83,9 +85,11 @@ class RegionModel:
 
     def calibrate(self, gdp: float) -> None:
         """Calibrate all sectors to base-year data."""
+        gem_data = getattr(self, "_gem_vintage_data", None)
         self.electricity.calibrate(
             DEFAULT_ELEC_SHARES.get(self.name, {}),
             self.fuel_prices,
+            gem_vintage_data=gem_data,
         )
         self.hydrogen.calibrate(
             {"smr": 0.95, "electrolysis": 0.05},
@@ -117,8 +121,15 @@ def build_region_model(
     region: str,
     base_gdp: float,
     base_pop: float,
+    gem_vintage_data: dict[str, dict[int, float]] | None = None,
 ) -> RegionModel:
-    """Initialize a RegionModel with base-year calibration data."""
+    """Initialize a RegionModel with base-year calibration data.
+
+    Parameters
+    ----------
+    gem_vintage_data : dict, optional
+        {tech: {vintage_year: ej}} from GEM preprocessing for this region.
+    """
     # Base-year total final demand
     fd = DEFAULT_FINAL_DEMAND.get(region, {"industry": 5.0, "buildings": 5.0, "transport": 5.0})
     total_final = sum(fd.values())
@@ -128,11 +139,18 @@ def build_region_model(
     for sector_name, base_ej in fd.items():
         demand_sectors[sector_name] = FinalDemand(sector_name, base_ej)
 
-    # KLEM driver
-    klem = KLEMDriver(base_gdp, base_pop, total_final)
+    # Compute base-year composite energy price (expenditure-weighted)
+    fuel_prices = _default_fuel_prices()
+    base_carrier_prices_map = {c: fuel_prices.get(c, 5.0) for c in ENERGY_CARRIERS}
+    # Use equal-weighted demand as initial approximation for composite price
+    base_energy_price = sum(base_carrier_prices_map.values()) / len(ENERGY_CARRIERS)
 
-    # Electricity sector
-    elec = ElectricitySector()
+    # KLEM driver (CES-KLE with energy as explicit factor)
+    klem = KLEMDriver(base_gdp, base_pop, total_final,
+                      base_energy_price=base_energy_price, region=region)
+
+    # Electricity sector (region-aware for nuclear pipeline)
+    elec = ElectricitySector(region=region)
     elec.total_generation_ej = DEFAULT_ELEC_TOTAL_EJ.get(region, 5.0)
 
     # Transformation sectors
@@ -151,20 +169,12 @@ def build_region_model(
         fuel_prices=fuel_prices,
     )
 
+    # Store GEM data for calibration
+    model._gem_vintage_data = gem_vintage_data
+
     # Calibrate
     model.calibrate(base_gdp)
     return model
-
-
-_BASE_CARRIER_PRICES = None
-
-def _get_base_carrier_prices() -> list[float]:
-    """Cached base-year carrier prices for price index computation."""
-    global _BASE_CARRIER_PRICES
-    if _BASE_CARRIER_PRICES is None:
-        defaults = _default_fuel_prices()
-        _BASE_CARRIER_PRICES = [defaults.get(c, 5.0) for c in ENERGY_CARRIERS]
-    return _BASE_CARRIER_PRICES
 
 
 def solve_period(
@@ -294,30 +304,25 @@ def solve_period(
     # 1. Set TFP from pre-computed trajectory
     rm.klem.set_tfp_for_year(year)
 
-    # 2. Compute gross output from current capital stock
-    gross_output = rm.klem.compute_gross_output(population)
-
-    # Use gross output for demand computation (replaces exogenous SSP GDP)
-    gdp_for_demand = gross_output
-
-    base_carrier_prices = _get_base_carrier_prices()
+    # 2. Compute value added from Cobb-Douglas inner nest
+    va = rm.klem.compute_value_added(population)
 
     # 3. Price iteration loop
     total_energy = 0.0
-    klem_scale = 1.0
+    energy_price = rm.klem.base_energy_price  # initial guess
     final_demand = {}
     elec_gen = {}
     h2_gen = {}
     ref_result = {}
 
     for iteration in range(MAX_PRICE_ITER):
-        # 3a. Energy price index (relative to base year)
-        carrier_prices = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
-        energy_price_index = np.mean(carrier_prices) / np.mean(base_carrier_prices)
-
-        # 3b. KLEM total energy (macro CES envelope + global AEEI)
-        total_energy = rm.klem.compute_energy_demand(gdp_for_demand, energy_price_index)
+        # 3a. CES energy demand (replaces heuristic + KLEM coupling)
+        total_energy = rm.klem.compute_energy_demand(va, energy_price)
         total_energy *= aeei_factor
+
+        # 3b. CES gross output
+        gross_output = rm.klem.compute_gross_output(va, total_energy)
+        gdp_for_demand = gross_output
 
         # 3c. Raw sector demands (income-driven, for relative shares)
         raw_sector_demands: dict[str, dict[str, float]] = {}
@@ -331,15 +336,14 @@ def solve_period(
             carrier_demand = {c: d * sector_aeei for c, d in carrier_demand.items()}
             raw_sector_demands[name] = carrier_demand
 
-        # 3d. KLEM-sector coupling: scale sector demands to match KLEM total
+        # 3d. Scale sector demands to match CES total (natural coupling)
         sector_sum = sum(sum(cd.values()) for cd in raw_sector_demands.values())
-        klem_scale = total_energy / sector_sum if sector_sum > 0 else 1.0
-        klem_scale = max(KLEM_SCALE_CLAMP[0], min(klem_scale, KLEM_SCALE_CLAMP[1]))
+        scale = total_energy / sector_sum if sector_sum > 0 else 1.0
 
         final_demand = {}
         total_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
         for name, carrier_demand in raw_sector_demands.items():
-            scaled = {c: d * klem_scale for c, d in carrier_demand.items()}
+            scaled = {c: d * scale for c, d in carrier_demand.items()}
             final_demand[name] = scaled
             for c, d in scaled.items():
                 total_by_carrier[c] = total_by_carrier.get(c, 0.0) + d
@@ -389,6 +393,9 @@ def solve_period(
                 max_change = max(max_change, change)
             prices[key] = old_p + PRICE_DAMP * (new_p - old_p)
 
+        # Update composite energy price for next CES iteration
+        energy_price = KLEMDriver.composite_energy_price(prices, total_by_carrier)
+
         if max_change < PRICE_TOL:
             break
 
@@ -403,11 +410,12 @@ def solve_period(
         rm.fuel_prices[fuel] = defaults[fuel]
 
     # 4. Compute energy cost and net output
-    # Use actual scaled total (consistent when clamping activates)
     actual_total = sum(total_by_carrier.values())
-    carrier_prices_arr = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
-    avg_price = np.mean(carrier_prices_arr)
+    avg_price = KLEMDriver.composite_energy_price(prices, total_by_carrier)
     energy_cost = KLEMDriver.compute_energy_cost(actual_total, avg_price)
+
+    # Energy cost share = P_E × E / Y
+    energy_cost_share_val = energy_cost / gross_output if gross_output > 0 else 0.0
 
     # 6. Compute emissions (before revenue recycling, which depends on emissions)
     elec_emissions = rm.electricity.emissions_mtc(elec_gen)
@@ -441,6 +449,20 @@ def solve_period(
     investment = rm.klem.compute_investment(net_output)
     rm.klem.update_capital(investment)
 
+    # 6. Vintage stock tracking (optional)
+    vintage_surviving: dict[str, float] = {}
+    vintage_new_invest: dict[str, float] = {}
+    if rm.electricity.vintage_stock is not None and year is not None:
+        vintage_surviving = rm.electricity.vintage_stock.surviving_capacity(year)
+        # New investment = current capacity at this vintage year
+        for tech in rm.electricity.tech_names:
+            caps = rm.electricity.vintage_stock.get_vintage_capacities(tech)
+            vintage_new_invest[tech] = caps.get(year, 0.0)
+        # Prune retired vintages for memory
+        rm.electricity.vintage_stock.prune_retired(year)
+    if rm.hydrogen.vintage_stock is not None and year is not None:
+        rm.hydrogen.vintage_stock.prune_retired(year)
+
     return PeriodResult(
         year=year,
         region=rm.name,
@@ -464,7 +486,9 @@ def solve_period(
         carbon_price_usd_tco2=carbon_price,
         carbon_revenue_billion_usd=carbon_revenue,
         aeei_factor=aeei_factor,
-        klem_scale_factor=klem_scale,
+        energy_cost_share=energy_cost_share_val,
+        new_investment_ej=vintage_new_invest,
+        surviving_capacity_ej=vintage_surviving,
     )
 
 
@@ -501,17 +525,20 @@ def compute_primary_fuel_demand(
                 prices["oil"]
             )
 
-    # Compute gross output
+    # Compute value added + CES energy demand
     rm.klem.set_tfp_for_year(year)
-    gross_output = rm.klem.compute_gross_output(population)
+    va = rm.klem.compute_value_added(population)
 
-    base_carrier_prices = _get_base_carrier_prices()
-    carrier_prices = [prices.get(c, 5.0) for c in ENERGY_CARRIERS]
-    energy_price_index = np.mean(carrier_prices) / np.mean(base_carrier_prices)
+    # Composite energy price (expenditure-weighted from current prices)
+    carrier_prices_map = {c: prices.get(c, 5.0) for c in ENERGY_CARRIERS}
+    energy_price = sum(carrier_prices_map.values()) / len(ENERGY_CARRIERS)
 
-    # Total energy from KLEM (macro CES envelope)
+    # Total energy from CES FOC
     aeei_factor = policy.efficiency_standards.cumulative_factor("global", year, BASE_YEAR)
-    klem_total = rm.klem.compute_energy_demand(gross_output, energy_price_index) * aeei_factor
+    klem_total = rm.klem.compute_energy_demand(va, energy_price) * aeei_factor
+
+    # Gross output from CES
+    gross_output = rm.klem.compute_gross_output(va, klem_total)
 
     # Raw sector demands by carrier
     raw_by_carrier: dict[str, float] = {c: 0.0 for c in ENERGY_CARRIERS}
@@ -521,11 +548,10 @@ def compute_primary_fuel_demand(
         for c, d in carrier_demand.items():
             raw_by_carrier[c] = raw_by_carrier.get(c, 0.0) + d * sector_aeei
 
-    # KLEM-sector coupling
+    # Scale sector demands to match CES total (natural coupling)
     sector_sum = sum(raw_by_carrier.values())
-    klem_scale = klem_total / sector_sum if sector_sum > 0 else 1.0
-    klem_scale = max(KLEM_SCALE_CLAMP[0], min(klem_scale, KLEM_SCALE_CLAMP[1]))
-    total_by_carrier = {c: d * klem_scale for c, d in raw_by_carrier.items()}
+    scale = klem_total / sector_sum if sector_sum > 0 else 1.0
+    total_by_carrier = {c: d * scale for c, d in raw_by_carrier.items()}
 
     # Electricity sector fuel consumption
     elec_demand = total_by_carrier.get("electricity", 5.0)
@@ -842,12 +868,20 @@ def run_model(
     pop_df = ssp_data["population"]
     gdp_df = ssp_data["gdp"]
 
+    # Load GEM vintage data (graceful fallback to empty)
+    try:
+        from ghim.data.gem_cal import load_gem_vintage_data
+        all_gem_data = load_gem_vintage_data()
+    except Exception:
+        all_gem_data = {}
+
     # Initialize region models with base year data
     region_models: dict[str, RegionModel] = {}
     for region in R10_REGIONS:
         base_gdp = float(gdp_df.loc[region, BASE_YEAR]) if BASE_YEAR in gdp_df.columns else 1000.0
         base_pop = float(pop_df.loc[region, BASE_YEAR]) if BASE_YEAR in pop_df.columns else 100.0
-        rm = build_region_model(region, base_gdp, base_pop)
+        gem_data = all_gem_data.get(region)
+        rm = build_region_model(region, base_gdp, base_pop, gem_vintage_data=gem_data)
 
         # Initialize TFP trajectory from SSP GDP path
         ssp_gdp_series = {}

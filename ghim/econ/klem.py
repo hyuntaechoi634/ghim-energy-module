@@ -1,31 +1,47 @@
-"""DICE-style macroeconomic driver with energy feedback.
+"""CES-KLE macroeconomic driver with energy as an explicit factor.
 
-Production function:  Y = A(t) * K(t)^α * L(t)^(1-α)
+Production function:  Y ≈ VA = TFP × K^α × L^(1-α)
+Energy demand from CES first-order condition:
+  E = E_base × (VA/VA_base) × (P_E/P_E_base)^(-σ_KLE)
 
 GDP is endogenous: energy costs reduce net output, which reduces
 investment, which lowers capital stock, which lowers future GDP.
 
-TFP trajectory A(t) is calibrated once from the SSP GDP path
+TFP trajectory is calibrated once from the SSP GDP path
 (so Y ≈ Y_SSP without energy shocks), then held fixed.
+
+Key improvements over old DICE-style approach:
+- σ_KLE (0.4, GCAM/WITCH range) replaces ad-hoc σ_EM (0.5)
+- Expenditure-weighted composite energy price replaces naive mean
+- Regional labor force participation from ILO 2020 data
+- No KLEM_SCALE_CLAMP hack — CES naturally determines total energy
 """
 
 from __future__ import annotations
 
+import numpy as np
+
 from ghim.config import (
-    SIGMA_EM,
+    SIGMA_KLE, MIN_ENERGY_COST_SHARE,
     CAPITAL_SHARE, SAVINGS_RATE, INVESTMENT_CAP_RATE,
     CAPITAL_OUTPUT_RATIO,
     DEPRECIATION_RATE, LABOR_FORCE_PARTICIPATION,
     TIMESTEP, BASE_YEAR, MODEL_YEARS, HISTORICAL_YEARS, FUTURE_YEARS,
+    REGIONAL_LFP,
 )
 
 
 class KLEMDriver:
-    """DICE-style macro driver for a single region.
+    """CES-KLE macro driver for a single region.
+
+    Two-level structure:
+        Level 1 (inner):  VA = TFP × K^α × L^(1-α)  (Cobb-Douglas)
+        Level 2 (outer):  E demand from CES FOC: E/VA ∝ (P_E)^(-σ)
+        Gross output:     Y = VA  (energy's contribution via cost feedback)
 
     Feedback loop:
-        Y = A*K^α*L^(1-α)  →  energy demand  →  energy cost
-        →  net_Y = Y - cost  →  I = s*net_Y  →  K(t+1)
+        VA → CES FOC → E demand → energy cost
+        → net_Y = Y - cost → I = s*net_Y → K(t+1)
     """
 
     def __init__(
@@ -33,33 +49,48 @@ class KLEMDriver:
         base_gdp: float,               # billion USD PPP
         base_population: float,         # millions
         base_energy_demand_ej: float,   # total energy demand (EJ)
+        base_energy_price: float = 5.0, # composite energy price $/GJ at base year
+        region: str = "",               # for regional LFP lookup
         capital_share: float = CAPITAL_SHARE,
         savings_rate: float = SAVINGS_RATE,
-        sigma_em: float = SIGMA_EM,
+        sigma_kle: float = SIGMA_KLE,
     ):
         # Parameters
         self.alpha = capital_share
         self.savings_rate = savings_rate
         self.investment_cap_rate = INVESTMENT_CAP_RATE
-        self.sigma_em = sigma_em
+        self.sigma_kle = sigma_kle
 
         # Base-year values
         self.base_gdp = base_gdp
         self.base_population = base_population
         self.base_energy = base_energy_demand_ej
+        self.base_energy_price = max(base_energy_price, 0.01)
+        self.region = region
 
         # Capital stock (K/Y ratio from config)
         self.capital_stock = base_gdp * CAPITAL_OUTPUT_RATIO
 
-        # Labor
-        self.labor = base_population * LABOR_FORCE_PARTICIPATION
+        # Regional labor force participation (ILO 2020)
+        self.lfp = REGIONAL_LFP.get(region, LABOR_FORCE_PARTICIPATION)
+        self.labor = base_population * self.lfp
 
-        # Calibrate base TFP: A = Y / (K^α * L^(1-α))
+        # Calibrate base TFP: A such that VA = base_gdp at base year
         kl = self.capital_stock ** self.alpha * self.labor ** (1.0 - self.alpha)
         self.tfp = base_gdp / kl if kl > 0 else 1.0
 
+        # Energy cost share at base year: s_E = P_E × E / GDP
+        self.base_energy_cost_share = max(
+            base_energy_price * base_energy_demand_ej / base_gdp
+            if base_gdp > 0 else MIN_ENERGY_COST_SHARE,
+            MIN_ENERGY_COST_SHARE,
+        )
+
         # TFP trajectory (populated by init_tfp_trajectory)
         self._tfp_trajectory: dict[int, float] = {BASE_YEAR: self.tfp}
+
+        # Backward compat alias
+        self.sigma_em = sigma_kle
 
     # ------------------------------------------------------------------
     # TFP trajectory
@@ -81,7 +112,6 @@ class KLEMDriver:
         decay = (1.0 - DEPRECIATION_RATE) ** TIMESTEP
 
         # --- Step 1: backward solve for historical K ---
-        # historical_years_desc = [2015, 2010, 2005, 2000] (reverse, excluding BASE_YEAR)
         historical_years_desc = list(reversed(HISTORICAL_YEARS[:-1]))
         k_hist: dict[int, float] = {BASE_YEAR: self.capital_stock}
 
@@ -89,9 +119,7 @@ class KLEMDriver:
         for year in historical_years_desc:
             y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
             inv = min(self.savings_rate * y_ssp, self.investment_cap_rate * k_next)
-            # K(t) = (K(t+dt) - I * dt) / decay
             k_prev = (k_next - inv * TIMESTEP) / decay
-            # Floor: K cannot be less than 1% of GDP
             k_prev = max(k_prev, 0.01 * y_ssp)
             k_hist[year] = k_prev
             k_next = k_prev
@@ -103,21 +131,19 @@ class KLEMDriver:
         for year in HISTORICAL_YEARS:
             y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
             pop = pop_by_year.get(year, self.base_population)
-            labor = pop * LABOR_FORCE_PARTICIPATION
+            labor = pop * self.lfp
             k_ref = k_hist[year]
 
             kl = k_ref ** self.alpha * labor ** (1.0 - self.alpha)
             a = y_ssp / kl if kl > 0 else self.tfp
             self._tfp_trajectory[year] = a
 
-        # Set initial capital stock to K(HISTORY_START) so the solver
-        # starts from the correct historical capital, not K(BASE_YEAR).
+        # Set initial capital stock to K(HISTORY_START)
         self.capital_stock = k_hist[HISTORICAL_YEARS[0]]
 
         # Future years: forward-evolve K from BASE_YEAR
-        k_ref = k_hist[BASE_YEAR]  # K(BASE_YEAR)
+        k_ref = k_hist[BASE_YEAR]
         for year in FUTURE_YEARS:
-            # Evolve K first (using previous period's Y_SSP)
             prev_year = year - TIMESTEP
             y_prev = ssp_gdp_by_year.get(prev_year, self.base_gdp)
             inv_ref = min(
@@ -126,10 +152,9 @@ class KLEMDriver:
             )
             k_ref = decay * k_ref + inv_ref * TIMESTEP
 
-            # Calibrate TFP
             y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
             pop = pop_by_year.get(year, self.base_population)
-            labor = pop * LABOR_FORCE_PARTICIPATION
+            labor = pop * self.lfp
 
             kl = k_ref ** self.alpha * labor ** (1.0 - self.alpha)
             a = y_ssp / kl if kl > 0 else self.tfp
@@ -141,38 +166,93 @@ class KLEMDriver:
             self.tfp = self._tfp_trajectory[year]
 
     # ------------------------------------------------------------------
-    # Production & demand
+    # Production & demand (CES-KLE)
     # ------------------------------------------------------------------
 
-    def compute_gross_output(self, population: float) -> float:
-        """Gross output: Y = A * K^α * L^(1-α)."""
-        self.labor = population * LABOR_FORCE_PARTICIPATION
+    def compute_value_added(self, population: float) -> float:
+        """Value Added: VA = TFP × K^α × L^(1-α)  (Cobb-Douglas)."""
+        self.labor = population * self.lfp
         return self.tfp * self.capital_stock ** self.alpha * self.labor ** (1.0 - self.alpha)
 
     def compute_energy_demand(
         self,
-        gross_output: float,
-        energy_price_index: float,
+        value_added: float,
+        energy_price: float,
     ) -> float:
-        """Energy demand responsive to GDP and prices.
+        """Energy demand from CES first-order condition.
 
-        E = E_base * (Y / Y_base) * (P / P_base)^(-σ)
+        E = E_base × (VA / VA_base) × (P_E / P_E_base)^(-σ_KLE)
+
+        Derived from the CES cost-minimization FOC:
+          E/VA = (α_E/α_VA)^σ × (P_VA/P_E)^σ
+
+        At base year this reproduces E_base exactly. The response to
+        price changes is governed by σ_KLE (the VA-Energy substitution
+        elasticity).
 
         Parameters
         ----------
-        gross_output : float
-            Current gross output (billion USD PPP).
-        energy_price_index : float
-            Composite energy price relative to base year (P/P_base).
+        value_added : float
+            Current value added VA (billion USD PPP).
+        energy_price : float
+            Composite energy price ($/GJ).
 
         Returns
         -------
         float
             Total energy demand in EJ.
         """
-        gdp_ratio = gross_output / self.base_gdp if self.base_gdp > 0 else 1.0
-        price_ratio = max(energy_price_index, 0.01)
-        return self.base_energy * gdp_ratio * price_ratio ** (-self.sigma_em)
+        va_ratio = value_added / self.base_gdp if self.base_gdp > 0 else 1.0
+        price_ratio = max(energy_price / self.base_energy_price, 0.01)
+        return self.base_energy * va_ratio * price_ratio ** (-self.sigma_kle)
+
+    def compute_gross_output(
+        self,
+        value_added: float,
+        energy_ej: float,
+    ) -> float:
+        """Gross output Y ≈ VA.
+
+        In a two-level CES, Y = CES(VA, E) ≈ VA when energy's cost share
+        is small (~5%).  Energy's contribution to the economy is captured
+        through the cost feedback loop (net_output = gross - energy_cost).
+
+        Parameters
+        ----------
+        value_added : float
+            Value added from Cobb-Douglas inner nest (billion USD).
+        energy_ej : float
+            Total energy input (EJ). Not directly used in Y calculation
+            but kept in signature for interface consistency and potential
+            future CES aggregation.
+        """
+        return value_added
+
+    @staticmethod
+    def composite_energy_price(
+        carrier_prices: dict[str, float],
+        carrier_demands: dict[str, float],
+    ) -> float:
+        """Expenditure-weighted composite energy price ($/GJ).
+
+        Parameters
+        ----------
+        carrier_prices : dict
+            Carrier name → price $/GJ.
+        carrier_demands : dict
+            Carrier name → demand EJ.
+
+        Returns
+        -------
+        float
+            Weighted average energy price.
+        """
+        total_cost = sum(
+            carrier_prices.get(c, 5.0) * d
+            for c, d in carrier_demands.items()
+        )
+        total_ej = sum(carrier_demands.values())
+        return total_cost / total_ej if total_ej > 0 else 5.0
 
     # ------------------------------------------------------------------
     # Energy cost & net output

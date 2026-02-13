@@ -40,9 +40,28 @@ CAPITAL_OUTPUT_RATIO: float = 3.0   # K/Y ratio for base-year capital calibratio
 # CES elasticities (KLEM nesting, WITCH-inspired defaults)
 # ---------------------------------------------------------------------------
 SIGMA_VA: float = 0.5    # Value Added: Capital vs Labor
-SIGMA_EM: float = 0.5    # Energy-Materials composite
+SIGMA_EM: float = 0.5    # Energy-Materials composite (deprecated, kept for compat)
 SIGMA_E: float = 1.0     # Electric vs Non-electric energy
 SIGMA_NE: float = 2.0    # Among non-electric fuels (coal, oil, gas, biomass)
+
+# CES-KLE: two-level nested CES production function
+# Y = TFP × CES(VA, E; σ_KLE)  where VA = K^α × L^(1-α)
+SIGMA_KLE: float = 0.4   # VA-Energy substitution (GCAM/WITCH range 0.3-0.5)
+MIN_ENERGY_COST_SHARE: float = 0.05  # floor to prevent degenerate calibration
+
+# Regional labor force participation rates (ILO 2020 estimates)
+REGIONAL_LFP: dict[str, float] = {
+    "Africa": 0.63,
+    "Asia-Pacific Developed": 0.61,
+    "Eastern Asia": 0.68,
+    "Eurasia": 0.59,
+    "Europe": 0.58,
+    "Latin America and Caribbean": 0.62,
+    "Middle East": 0.51,
+    "North America": 0.61,
+    "South-East Asia and developing Pacific": 0.67,
+    "Southern Asia": 0.50,
+}
 
 # ---------------------------------------------------------------------------
 # Logit parameters
@@ -91,6 +110,37 @@ TURNOVER_TIMES: dict[str, float] = {
     "refining": 40.0,       # Refineries
     "data_centers": 7.0,    # Server hardware lifecycle
 }
+
+# ---------------------------------------------------------------------------
+# Vintage stock retirement (GCAM-inspired S-curve)
+# ---------------------------------------------------------------------------
+TECH_RETIREMENT_LIFETIMES: dict[str, float] = {
+    # Electricity
+    "coal": 60.0, "gas_cc": 45.0, "nuclear": 60.0, "hydro": 80.0,
+    "wind": 30.0, "solar": 30.0, "biomass": 60.0, "oil": 45.0,
+    # Hydrogen
+    "smr": 30.0, "electrolysis": 25.0,
+}
+SCURVE_STEEPNESS: float = 0.1           # k: S-curve shape parameter
+SCURVE_HALFLIFE_RATIO: float = 0.75     # rho: more conservative than GCAM's 0.5
+HARD_CUTOFF_TECHS: frozenset[str] = frozenset({"wind", "solar", "electrolysis"})
+
+# Demand-sector carrier lifetimes (= equipment lifetime, not sector turnover)
+CARRIER_RETIREMENT_LIFETIMES: dict[str, float] = {
+    "transport": 20.0,      # vehicle fleet (all fuel types)
+    "buildings": 30.0,      # heating systems (furnace/heat pump/boiler)
+    "industry_heavy": 40.0, # industrial boilers/furnaces
+    "industry_light": 25.0, # lighter equipment
+    "data_centers": 10.0,   # server hardware lifecycle
+}
+
+# Profit shutdown (electricity only, stubs for now)
+PROFIT_SHUTDOWN_MEDIAN: float = -0.1      # GCAM default
+PROFIT_SHUTDOWN_STEEPNESS: float = 6.0
+PROFIT_SHUTDOWN_OIL_MEDIAN: float = -0.5  # GCAM: refined liquids steam/CT
+
+# Nuclear/hydro construction pipeline
+CONSTRUCTION_TIMES: dict[str, int] = {"nuclear": 2, "hydro": 1}  # periods delay
 
 # ---------------------------------------------------------------------------
 # Learning-by-doing (WITCH-style experience curves)
@@ -167,7 +217,7 @@ TRADE_MAX_PROD_DECLINE: float = 0.30   # max 30% production decline per region p
 # ---------------------------------------------------------------------------
 # KLEM-Sector coupling (WITCH-style)
 # ---------------------------------------------------------------------------
-KLEM_SCALE_CLAMP: tuple[float, float] = (0.5, 2.0)  # min/max scale factor
+KLEM_SCALE_CLAMP: tuple[float, float] = (0.5, 2.0)  # deprecated, kept for compat
 GCAM3_TO_2020_DEFLATOR: float = 3.79   # 1975$ → 2020$ GDP deflator (BEA 105.381/27.800)
 
 # Observed 2020 fossil fuel prices (2020$/GJ) from BP Statistical Review

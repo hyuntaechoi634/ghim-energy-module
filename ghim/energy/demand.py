@@ -32,13 +32,14 @@ import numpy as np
 from ghim.config import (
     DEMAND_LOGIT_EXP, BASE_YEAR, PREF_LOGIT_SCALE, TIMESTEP,
     TURNOVER_TIMES, LOGIT_EXP_PREF, PREF_DECAY_RATES,
+    CARRIER_RETIREMENT_LIFETIMES,
 )
 from ghim.energy.logit import (
     logit_shares, logit_calibrate,
     preference_logit, preference_calibrate,
     relative_pref_logit,
 )
-from ghim.energy.stock import apply_stock_turnover
+from ghim.energy.stock import apply_stock_turnover, VintageStock
 
 # Energy carriers available to final demand sectors
 ENERGY_CARRIERS = ["coal", "refined liquids", "gas", "electricity", "biomass", "hydrogen"]
@@ -93,12 +94,14 @@ class DemandNode:
         scale_k: float = PREF_LOGIT_SCALE,
         turnover_time: float = 30.0,
         logit_exp: float = LOGIT_EXP_PREF,
+        carrier_lifetime: float | None = None,
     ):
         self.name = name
         self.children = children
         self.scale_k = scale_k
         self.turnover_time = turnover_time
         self.logit_exp = logit_exp
+        self.carrier_lifetime = carrier_lifetime
 
         # Ordered child names
         self._child_names = [c.name for c in children]
@@ -114,6 +117,9 @@ class DemandNode:
 
         # Stock turnover state
         self.current_shares: np.ndarray | None = None
+
+        # Optional vintage stock (fuel-carrier nodes only, not structural)
+        self.vintage_stock: VintageStock | None = None
 
     def _child_cost(self, child: DemandNode | DemandLeaf, fuel_prices: dict[str, float]) -> float:
         """Get effective cost of a child (leaf=fuel price, branch=weighted avg)."""
@@ -139,6 +145,19 @@ class DemandNode:
         )
         self.base_pref_factors = self.pref_factors.copy()
         self.current_shares = self._base_shares.copy()
+
+        # Initialize vintage stock for fuel-carrier nodes (not structural)
+        if self.carrier_lifetime is not None:
+            lifetime = self.carrier_lifetime
+            self.vintage_stock = VintageStock(
+                tech_names=self._child_names,
+                lifetimes={n: lifetime for n in self._child_names},
+                hard_cutoff_techs=set(),  # no hard cutoff for demand carriers
+            )
+            # Single base-year vintage (distribution unknown for demand)
+            self.vintage_stock.initialize_single_vintage(
+                self._base_shares, 1.0, BASE_YEAR,
+            )
 
     def _compute_pref_factors(
         self,
@@ -199,8 +218,14 @@ class DemandNode:
         else:
             target_shares = self._base_shares
 
-        # Stock turnover
-        if self.current_shares is not None:
+        # Stock turnover: vintage-bin S-curve for fuel-carrier nodes,
+        # simple share-blending for structural nodes
+        if self.vintage_stock is not None and year is not None:
+            effective = self.vintage_stock.retire_and_invest(
+                year, target_shares, total_ej,
+            )
+            self.current_shares = effective
+        elif self.current_shares is not None:
             effective = apply_stock_turnover(
                 self.current_shares, target_shares, TIMESTEP, self.turnover_time,
             )
@@ -234,28 +259,41 @@ def _make_fuel_node(
     fuel_shares: dict[str, float],
     scale_k: float = PREF_LOGIT_SCALE,
     turnover_time: float = 30.0,
+    carrier_lifetime: float | None = None,
 ) -> DemandNode:
-    """Helper: create a DemandNode whose children are fuel leaves."""
+    """Helper: create a DemandNode whose children are fuel leaves.
+
+    Parameters
+    ----------
+    carrier_lifetime : float, optional
+        If provided, creates a VintageStock with S-curve retirement
+        at this lifetime.  Used for fuel-carrier nodes (physical capital).
+    """
     children = [
         DemandLeaf(f"{name}_{carrier}", carrier)
         for carrier in fuel_shares
     ]
     base_shares = {f"{name}_{carrier}": share for carrier, share in fuel_shares.items()}
-    return DemandNode(name, children, base_shares, scale_k, turnover_time)
+    return DemandNode(
+        name, children, base_shares, scale_k, turnover_time,
+        carrier_lifetime=carrier_lifetime,
+    )
 
 
 def _default_transport_tree() -> DemandNode:
     """Transport: passenger/freight subsectors with fuel competition."""
+    lt = CARRIER_RETIREMENT_LIFETIMES.get("transport", 20.0)
     passenger = _make_fuel_node("passenger", {
         "refined liquids": 0.87, "electricity": 0.05, "gas": 0.04,
         "hydrogen": 0.02, "biomass": 0.02,
-    }, turnover_time=TURNOVER_TIMES["transport"])
+    }, turnover_time=TURNOVER_TIMES["transport"], carrier_lifetime=lt)
 
     freight = _make_fuel_node("freight", {
         "refined liquids": 0.95, "gas": 0.02, "electricity": 0.01,
         "hydrogen": 0.01, "biomass": 0.01,
-    }, turnover_time=TURNOVER_TIMES["transport"])
+    }, turnover_time=TURNOVER_TIMES["transport"], carrier_lifetime=lt)
 
+    # Structural node: no vintage stock (share-blending for economic structure)
     return DemandNode(
         "transport",
         [passenger, freight],
@@ -274,18 +312,22 @@ def _default_industry_tree() -> DemandNode:
     heavy = _make_fuel_node("heavy", {
         "coal": 0.35, "gas": 0.25, "electricity": 0.15,
         "refined liquids": 0.10, "biomass": 0.10, "hydrogen": 0.05,
-    }, turnover_time=TURNOVER_TIMES["industry"])
+    }, turnover_time=TURNOVER_TIMES["industry"],
+       carrier_lifetime=CARRIER_RETIREMENT_LIFETIMES.get("industry_heavy", 40.0))
 
     light = _make_fuel_node("light", {
         "electricity": 0.40, "gas": 0.25, "refined liquids": 0.15,
         "coal": 0.10, "biomass": 0.08, "hydrogen": 0.02,
-    }, turnover_time=TURNOVER_TIMES["industry"])
+    }, turnover_time=TURNOVER_TIMES["industry"],
+       carrier_lifetime=CARRIER_RETIREMENT_LIFETIMES.get("industry_light", 25.0))
 
     # Data centers: 100% electricity, short turnover
     data_centers = _make_fuel_node("data_centers", {
         "electricity": 1.0,
-    }, turnover_time=TURNOVER_TIMES.get("data_centers", 7.0))
+    }, turnover_time=TURNOVER_TIMES.get("data_centers", 7.0),
+       carrier_lifetime=CARRIER_RETIREMENT_LIFETIMES.get("data_centers", 10.0))
 
+    # Structural node: no vintage stock
     return DemandNode(
         "industry",
         [heavy, light, data_centers],
@@ -297,16 +339,18 @@ def _default_industry_tree() -> DemandNode:
 
 def _default_buildings_tree() -> DemandNode:
     """Buildings: residential/commercial subsectors with fuel competition."""
+    lt = CARRIER_RETIREMENT_LIFETIMES.get("buildings", 30.0)
     residential = _make_fuel_node("residential", {
         "electricity": 0.35, "gas": 0.30, "biomass": 0.18,
         "refined liquids": 0.12, "coal": 0.04, "hydrogen": 0.01,
-    }, turnover_time=TURNOVER_TIMES["buildings"])
+    }, turnover_time=TURNOVER_TIMES["buildings"], carrier_lifetime=lt)
 
     commercial = _make_fuel_node("commercial", {
         "electricity": 0.50, "gas": 0.30, "refined liquids": 0.08,
         "biomass": 0.08, "coal": 0.02, "hydrogen": 0.02,
-    }, turnover_time=TURNOVER_TIMES["buildings"])
+    }, turnover_time=TURNOVER_TIMES["buildings"], carrier_lifetime=lt)
 
+    # Structural node: no vintage stock
     return DemandNode(
         "buildings",
         [residential, commercial],

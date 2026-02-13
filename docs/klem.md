@@ -1,6 +1,6 @@
 # KLEM Macroeconomic Component
 
-Detailed technical documentation for the KLEM (Capital-Labor-Energy-Materials) macroeconomic driver in GHIM.
+Detailed technical documentation for the CES-KLE macroeconomic driver in GHIM.
 
 **Source files:**
 - `ghim/econ/klem.py` — `KLEMDriver` class
@@ -9,362 +9,527 @@ Detailed technical documentation for the KLEM (Capital-Labor-Energy-Materials) m
 
 ---
 
-## 1. Overview
+## 1. Overview: What Does the KLEM Module Do?
 
-KLEM implements a **DICE-style endogenous GDP** model where energy costs feed back into economic output. Unlike pure IAMs that take GDP as exogenous (from SSP scenarios), GHIM computes GDP endogenously: energy price shocks reduce net output, lower investment, shrink capital stock, and thus lower future GDP.
+The KLEM module answers a fundamental question: **how much energy does the economy need, and what happens when energy gets expensive?**
 
-The production function is Cobb-Douglas:
+In many models, GDP is taken directly from SSP scenarios as a fixed input. GHIM instead treats GDP as **endogenous** — energy prices affect economic output, which affects investment, which changes the capital stock, which changes future GDP. This feedback loop is the core of the KLEM module.
+
+The name "KLEM" stands for **Capital (K), Labor (L), Energy (E), Materials (M)**. GHIM implements a "KLE" variant: Materials are implicit in TFP (like GCAM), not modeled as a separate factor.
+
+### 1.1 The Big Picture
 
 ```
-Y(t) = A(t) * K(t)^alpha * L(t)^(1-alpha)
+    SSP Scenarios (Population, GDP|PPP)
+                  │
+    TFP calibrated once (A(t) so that Y ≈ Y_SSP in reference case)
+                  │
+                  ▼
+    ┌────────────────────────────┐
+    │    Value Added (inner)     │
+    │  VA = TFP × K^α × L^(1-α) │  ← Cobb-Douglas
+    └────────────┬───────────────┘
+                 │
+                 ▼
+    ┌────────────────────────────┐
+    │  CES Energy Demand (outer) │
+    │  E = f(VA, P_E; σ_KLE)    │  ← How much energy?
+    └────────────┬───────────────┘
+                 │
+                 ▼
+    ┌────────────────────────────┐
+    │  Energy Supply Chain       │
+    │  Electricity, Refining,    │  ← What mix of fuels?
+    │  Hydrogen, Final Demand    │
+    └────────────┬───────────────┘
+                 │
+                 ▼
+    ┌────────────────────────────┐
+    │  Energy Cost Feedback      │
+    │  NetOutput = Y - cost      │  ← GDP drag from energy
+    │  I = s × NetOutput         │
+    │  K(t+1) = K(t) + I×dt     │  ← Lower K → lower future Y
+    └────────────────────────────┘
 ```
 
-where:
-- `Y` = gross output (billion USD PPP)
-- `A` = total factor productivity (TFP)
-- `K` = capital stock (billion USD PPP)
-- `L` = labor force (millions of people)
-- `alpha` = capital share (default 0.30)
-
-TFP `A(t)` is **calibrated once** from the SSP GDP path so that `Y_model ≈ Y_SSP` in the absence of energy shocks. During simulation, TFP is fixed and GDP diverges from SSP only through energy cost feedback on capital accumulation.
+The key insight: TFP is calibrated so that GDP matches the SSP path **in the absence of energy shocks**. Once energy prices change (from carbon pricing, resource depletion, technology learning, etc.), GDP diverges from the SSP reference — and this divergence propagates forward through capital accumulation.
 
 ---
 
-## 2. Capital Stock Dynamics
+## 2. The Two-Level Production Structure
 
-### 2.1 Accumulation Law
-
-Capital evolves via the standard perpetual inventory method:
+GHIM uses a **two-level nested CES** (Constant Elasticity of Substitution) structure, following the WITCH/GCAM tradition:
 
 ```
-K(t + dt) = (1 - delta)^dt * K(t) + I(t) * dt
+Level 1 (inner):  VA = TFP × K^α × L^(1-α)     [Cobb-Douglas]
+Level 2 (outer):  E  = E_base × (VA/VA_base) × (P_E/P_E_base)^(-σ_KLE)  [CES FOC]
+Gross output:     Y  = VA                         [Energy via cost feedback]
+```
+
+### 2.1 Why Two Levels?
+
+Each level captures a different type of substitution:
+
+- **Level 1 (K vs L)**: Capital and labor are substitutes with elasticity = 1 (Cobb-Douglas). Richer countries invest more in capital (machines replace workers). This is standard growth theory.
+
+- **Level 2 (VA vs E)**: Value-added and energy are substitutes with elasticity σ_KLE = 0.4. When energy gets expensive, the economy shifts toward less energy-intensive activities. The elasticity range 0.3–0.5 comes from empirical estimates (GCAM uses ~0.35, WITCH uses ~0.5).
+
+### 2.2 Why Not Full CES(VA, E)?
+
+The mathematically "pure" approach would compute gross output as `Y = CES(VA, E; σ)`. We tried this and discovered a fundamental problem:
+
+**Unit mismatch**: VA is measured in billion USD while E is measured in EJ. These are incommensurable quantities. The CES function `(α₁ × VA^ρ + α₂ × E^ρ)^(1/ρ)` would mix dollars and joules in the same aggregation — which requires arbitrary scaling and produces fragile calibration.
+
+**Primal-dual inconsistency**: The CES calibration function (`ces_calibrate`) works in the cost-function (dual) space, computing share parameters from base-year prices and quantities. But using those same share parameters in the production-function (primal) space to derive energy demand via the first-order condition doesn't reproduce base-year quantities. This is a known issue in CES modeling with heterogeneous-unit inputs.
+
+**The resolution**: The CES first-order condition (FOC) can be shown to reduce to the clean isoelastic formula:
+
+```
+E = E_base × (VA / VA_base) × (P_E / P_E_base)^(-σ_KLE)
+```
+
+This is mathematically equivalent to the full CES FOC, reproduces base-year demand exactly by construction, responds to prices with the correct elasticity, and has no unit-mismatch issues. Gross output `Y = VA` because energy's contribution is captured through the cost feedback loop: higher energy costs → lower net output → lower investment → lower capital → lower future VA.
+
+---
+
+## 3. Energy Demand from CES First-Order Condition
+
+The central equation of the KLEM module:
+
+```
+E(t) = E_base × (VA(t) / VA_base) × (P_E(t) / P_E_base)^(-σ_KLE)
+```
+
+### 3.1 How to Read This Equation
+
+The equation has two multiplicative effects:
+
+1. **Income effect** `(VA / VA_base)`: Energy demand grows proportionally with economic output. If the economy doubles, energy demand doubles (unitary income elasticity at the aggregate level). This is a standard assumption for the aggregate — sector-specific income elasticities handle the composition effect (see Section 7).
+
+2. **Price effect** `(P_E / P_E_base)^(-σ_KLE)`: Higher energy prices reduce demand. With σ_KLE = 0.4:
+   - A 10% price increase → ~4% demand reduction
+   - A doubling of prices → ~24% demand reduction
+   - The substitution is moderate — the economy can reduce energy use, but not easily
+
+### 3.2 Where Does This Come From?
+
+Starting from a CES production function `Y = CES(VA, E; σ)`, cost minimization gives the first-order condition:
+
+```
+E/VA = (α_E/α_VA)^σ × (P_VA/P_E)^σ
+```
+
+At the base year, this ratio equals `E_base/VA_base` by construction. At any other year, the ratio changes only due to price changes. Multiplying both sides by `VA` and normalizing to the base year gives exactly our formula.
+
+### 3.3 Composite Energy Price
+
+The "energy price" `P_E` is not a single number — the economy uses coal, gas, oil, electricity, biomass, and hydrogen. GHIM computes an **expenditure-weighted composite price**:
+
+```
+P_E = Σ_c (Price_c × Demand_c) / Σ_c Demand_c
+```
+
+This means fuels that represent a larger share of the energy bill have more influence on the composite price. If electricity costs $20/GJ and coal costs $2/GJ, but electricity is 60% of final demand, then electricity dominates the composite.
+
+This replaces the old naive arithmetic mean, which would give coal and electricity equal weight regardless of their consumption shares.
+
+### 3.4 AEEI (Autonomous Energy Efficiency Improvement)
+
+When a policy scenario includes efficiency standards, the energy demand is further reduced:
+
+```
+E_effective(t) = E(t) × AEEI_factor(t)
+```
+
+AEEI < 1.0 represents exogenous technological progress in energy efficiency (better insulation, more efficient vehicles, etc.).
+
+---
+
+## 4. Value Added: The Cobb-Douglas Inner Nest
+
+Value added (VA) is computed from a standard Cobb-Douglas production function:
+
+```
+VA(t) = A(t) × K(t)^α × L(t)^(1-α)
 ```
 
 where:
-- `delta` = annual depreciation rate (default 0.05)
-- `dt` = timestep in years (default 5)
-- `(1 - delta)^dt` = multi-year decay factor (0.95^5 = 0.7738)
+- `A(t)` = Total Factor Productivity (TFP), calibrated from SSP (see Section 5)
+- `K(t)` = Capital stock (billion USD PPP)
+- `L(t)` = Labor force = Population × Labor Force Participation rate
+- `α` = Capital share = 0.30 (standard Solow growth model value)
+
+### 4.1 Regional Labor Force Participation
+
+Different regions have very different labor force participation (LFP) rates. Using a single global value (65%) would systematically over-estimate labor in low-participation regions (Middle East: 51%) and under-estimate it in high-participation ones (Eastern Asia: 68%).
+
+GHIM uses **ILO 2020 estimates** for each R10 region:
+
+| Region | LFP Rate |
+|--------|----------|
+| Africa | 0.63 |
+| Asia-Pacific Developed | 0.61 |
+| Eastern Asia | 0.68 |
+| Eurasia | 0.59 |
+| Europe | 0.58 |
+| Latin America and Caribbean | 0.62 |
+| Middle East | 0.51 |
+| North America | 0.61 |
+| South-East Asia and developing Pacific | 0.67 |
+| Southern Asia | 0.50 |
+
+The effect is significant: Middle East (LFP=0.51) has 22% less effective labor than the global average, which raises its calibrated TFP correspondingly (since the same GDP must be explained with less labor input).
+
+---
+
+## 5. TFP Calibration
+
+TFP is calibrated once at initialization to ensure that the model GDP matches the SSP projection **in the absence of energy shocks**. During simulation, TFP is fixed — GDP diverges from SSP only through the energy cost feedback loop.
+
+### 5.1 Why Calibrate TFP?
+
+TFP captures "everything else" — technology, institutions, governance, human capital — that explains GDP beyond K and L. By calibrating TFP from the SSP path, we:
+
+1. Ensure the reference scenario tracks established SSP projections
+2. Attribute all non-KL growth to TFP (a standard decomposition)
+3. Isolate the energy cost feedback as the only source of GDP divergence
+
+### 5.2 The Two-Step Algorithm
+
+**Step 1: Backward K Solve (Historical Periods)**
+
+Starting from `K(2020)`, invert the capital accumulation equation backward through 2015, 2010, 2005, 2000:
+
+```
+K(t) = (K(t+dt) - I × dt) / (1 - δ)^dt
+```
+
+where `I = min(s × Y_SSP(t), cap_rate × K(t+dt))`.
+
+A floor of `0.01 × Y_SSP(t)` prevents negative capital. This produces historically consistent capital stocks: K(2000) < K(2005) < ... < K(2020).
+
+**Step 2: Forward TFP Calibration (All Periods)**
+
+With the full K trajectory, back out TFP at each period:
+
+```
+A(t) = Y_SSP(t) / (K(t)^α × L(t)^(1-α))
+```
+
+- **Historical years** use backward-solved K directly
+- **Future years** evolve K forward from K(2020) using the standard accumulation law
+
+After calibration, the solver's capital stock is reset to K(2000) so the recursive solver starts from the correct historical position.
+
+### 5.3 Properties of the Calibrated TFP
+
+- **Monotonically increasing** for growing GDP with constant population (typical SSP2/3)
+- **Historical TFP ≥ base-year TFP** (because K(history) < K(2020), so higher A is needed to explain the same GDP)
+- **No discontinuity** at the 2020→2025 boundary (both sides use K(2020) as anchor)
+
+The last property is critical: an earlier bug used K(2000) for forward TFP calibration, producing a TFP spike at 2025 that caused a GDP surge.
+
+---
+
+## 6. Capital Stock Dynamics
+
+### 6.1 Accumulation Law
+
+Capital evolves via the perpetual inventory method:
+
+```
+K(t + dt) = (1 - δ)^dt × K(t) + I(t) × dt
+```
+
+where:
+- `δ` = 0.05/year (annual depreciation)
+- `(1 - δ)^dt` = 0.95^5 = 0.7738 (5-year decay factor)
 - `I(t)` = annual investment rate
 
-### 2.2 Investment
+### 6.2 Investment
 
 Investment is a constant fraction of net output, capped by the capital stock:
 
 ```
-I(t) = min(s * NetOutput(t), cap_rate * K(t))
+I(t) = min(s × NetOutput(t), cap_rate × K(t))
 ```
 
-- `s` = savings rate (default 0.22)
-- `cap_rate` = investment cap rate (default 0.10)
+- `s` = 0.22 (savings rate, from Penn World Table)
+- `cap_rate` = 0.10 (investment cap rate)
 
-The cap prevents implausibly fast capital accumulation when GDP surges (e.g., from windfall energy cost reductions). It limits annual investment to 10% of the existing capital stock.
+The cap prevents implausibly fast capital accumulation when GDP surges. It limits annual investment to 10% of the existing capital stock.
 
-### 2.3 Base-Year Initialization
+### 6.3 Base-Year Initialization
 
 At the base year (2020), capital is initialized from the capital-output ratio:
 
 ```
-K(2020) = Y_SSP(2020) * CAPITAL_OUTPUT_RATIO    (default ratio = 3.0)
+K(2020) = Y_SSP(2020) × K/Y_ratio    (K/Y_ratio = 3.0)
 ```
 
-For a region with base-year GDP of $25 trillion (North America), this gives K = $75 trillion.
+For North America with base-year GDP of ~$21 trillion, this gives K = $63 trillion.
 
 ---
 
-## 3. TFP Calibration
+## 7. Energy Cost Feedback Loop
 
-TFP is calibrated once during initialization via a two-step algorithm in `init_tfp_trajectory()`.
+This is the loop that makes GDP endogenous:
 
-### 3.1 Step 1: Backward K Solve (Historical Periods)
-
-Starting from `K(2020)`, the method inverts the capital accumulation equation backward through 2015, 2010, 2005, 2000:
+### 7.1 Energy Cost
 
 ```
-K(t) = (K(t+dt) - I * dt) / (1 - delta)^dt
+EnergyCost = E_total (EJ) × P_E_composite ($/GJ)
 ```
 
-where investment uses SSP GDP for the period:
+Note: 1 EJ = 10^9 GJ, so EJ × $/GJ directly gives billion USD. The composite price is the expenditure-weighted average from Section 3.3.
+
+### 7.2 Energy Cost Share
+
+An important diagnostic metric:
 
 ```
-I = min(s * Y_SSP(t), cap_rate * K(t+dt))
+energy_cost_share = EnergyCost / GrossOutput
 ```
 
-A floor of `0.01 * Y_SSP(t)` prevents negative capital. This produces historically consistent capital stocks: K(2000) < K(2020).
+At the base year, this is typically 5–10% for developed economies, 8–15% for developing economies. Values above 20% indicate severe energy burden. The model reports this as `PeriodResult.energy_cost_share`.
 
-### 3.2 Step 2: Forward TFP Calibration (All Periods)
-
-With the full K trajectory (backward-solved for historical, forward-evolved for future periods), TFP is backed out at each period:
+### 7.3 Net Output
 
 ```
-A(t) = Y_SSP(t) / (K(t)^alpha * L(t)^(1-alpha))
+NetOutput = max(GrossOutput - EnergyCost, 0.01 × GrossOutput)
 ```
 
-where `L(t) = Population(t) * LABOR_FORCE_PARTICIPATION` (default 0.65).
+The 1% floor prevents model collapse if energy costs exceed GDP (which can happen under extreme carbon pricing).
 
-**Historical years** use the backward-solved K directly. **Future years** evolve K forward from K(2020) using:
-
-```
-K(t) = (1 - delta)^dt * K(t-dt) + I_ref * dt
-I_ref = min(s * Y_SSP(t-dt), cap_rate * K(t-dt))
-```
-
-After TFP calibration, the solver's capital stock is reset to `K(2000)` so the recursive solver starts from the correct historical position.
-
-### 3.3 Design Rationale
-
-- TFP captures everything not explained by K and L (technology, institutions, etc.)
-- Calibrating TFP from SSP ensures model GDP tracks SSP projections in the reference case
-- Divergence arises only from the energy cost feedback loop (the whole point of endogenous GDP)
-- Growing SSP GDP with constant capital share produces increasing TFP over time
-
----
-
-## 4. Energy Demand
-
-Total energy demand responds to GDP and energy prices:
+### 7.4 The Feedback Chain
 
 ```
-E(t) = E_base * (Y(t) / Y_base) * (P(t) / P_base)^(-sigma_em)
+Energy price ↑  →  P_E ↑  →  E demand ↓ (CES substitution)
+                          →  EnergyCost ↑ (net of demand reduction)
+                          →  NetOutput ↓
+                          →  Investment ↓
+                          →  K(t+1) ↓
+                          →  VA(t+1) ↓
+                          →  Y(t+1) ↓
 ```
 
-- `E_base` = base-year total energy demand (EJ, from `DEFAULT_FINAL_DEMAND`)
-- `Y(t) / Y_base` = GDP growth effect (unitary income elasticity at aggregate level)
-- `P(t) / P_base` = energy price index (average carrier prices relative to base year)
-- `sigma_em` = energy-materials substitution elasticity (default 0.5)
+A one-time energy price shock propagates for many periods through capital dynamics. With depreciation rate 0.05 and savings rate 0.22, the half-life of a capital shock is approximately 14 years (3 model periods). This means a carbon tax introduced at 2025 is still reducing GDP relative to the reference at 2040+.
 
-The price index uses the simple mean of all carrier prices:
-
-```
-P(t) / P_base = mean(carrier_prices_t) / mean(carrier_prices_base)
-```
-
-Carriers: coal, refined liquids, gas, electricity, biomass, hydrogen.
-
-### 4.1 AEEI (Autonomous Energy Efficiency Improvement)
-
-When a policy scenario includes efficiency standards, total energy demand is further multiplied by the cumulative AEEI factor:
-
-```
-E_effective(t) = E(t) * AEEI_factor(t)
-```
-
-AEEI_factor < 1.0 represents exogenous efficiency improvement (e.g., from building codes, vehicle standards).
-
----
-
-## 5. Energy Cost Feedback
-
-The feedback loop that makes GDP endogenous:
-
-### 5.1 Energy Cost
-
-```
-EnergyCost = E_total(EJ) * AvgPrice($/GJ)
-```
-
-Note: 1 EJ = 10^9 GJ, so EJ * $/GJ directly gives billion USD.
-
-### 5.2 Net Output
-
-```
-NetOutput = max(GrossOutput - EnergyCost, 0.01 * GrossOutput)
-```
-
-The 1% floor prevents zero or negative net output from causing model collapse. In practice this means energy costs cannot consume more than 99% of gross output.
-
-### 5.3 Investment from Net Output
-
-```
-I = min(s * NetOutput, cap_rate * K)
-```
-
-Lower net output → lower investment → lower future K → lower future Y. This is the core feedback: an energy price shock today reduces GDP for many future periods through capital stock dynamics.
-
-### 5.4 Revenue Recycling
+### 7.5 Revenue Recycling
 
 If carbon pricing is active, carbon tax revenue can partially offset energy costs:
 
 ```
-Revenue = CarbonPrice * Emissions_MtCO2 / 1000 * RecyclingFraction
+Revenue = CarbonPrice × Emissions_MtCO2 / 1000 × RecyclingFraction
 EnergyCost_adjusted = max(EnergyCost - Revenue, 0)
 ```
 
-This attenuates the GDP drag from carbon pricing.
+This attenuates the GDP drag from carbon pricing — an important policy design feature.
 
 ---
 
-## 6. Solver Integration
+## 8. KLEM-Sector Coupling
 
-### 6.1 Period Solution (`solve_period`)
+A key design question: how does the macro-level energy demand (from CES) connect to the sector-level energy demands (from the nested logit demand trees)?
+
+### 8.1 The Problem
+
+The KLEM module determines **total** energy demand `E_total` based on macro variables (VA, composite price, σ_KLE). The demand sectors (industry, buildings, transport) determine **relative** energy demands based on income elasticities and fuel switching. These two quantities won't match in general:
+
+```
+E_klem ≠ Σ_sector E_sector
+```
+
+because the CES demand uses aggregate price elasticity while sector demands use sector-specific income elasticities.
+
+### 8.2 The Solution: Natural CES Scaling
+
+The solution is simple: sector demands determine the **composition** of energy use, while the CES total determines the **level**:
+
+```python
+# Scale sector demands to match CES total
+sector_sum = sum(sum(cd.values()) for cd in raw_sector_demands.values())
+scale = total_energy / sector_sum
+scaled_demand = {carrier: demand * scale for carrier, demand in raw.items()}
+```
+
+The scaling factor `scale` is typically close to 1.0 and varies smoothly over time. There is no clamping — the CES naturally constrains the scaling.
+
+### 8.3 Previous Approach (Deprecated)
+
+The previous implementation used `KLEM_SCALE_CLAMP = (0.5, 2.0)` to prevent extreme scaling ratios. This was a band-aid fix for a poorly calibrated energy demand heuristic. The CES-based approach eliminates the need for clamping because:
+
+1. The CES FOC is derived from the same economic theory as the sector demands
+2. The composite energy price properly reflects the actual fuel mix
+3. σ_KLE = 0.4 provides moderate substitution that doesn't diverge wildly
+
+---
+
+## 9. Solver Integration
+
+### 9.1 Period Solution Flow (`solve_period`)
 
 For each region in each period:
 
 1. **Set TFP** from pre-computed trajectory
-2. **Compute gross output**: `Y = A * K^alpha * L^(1-alpha)`
+2. **Compute value added**: `VA = TFP × K^α × L^(1-α)`
 3. **Price iteration loop** (up to 100 iterations):
-   - Compute energy price index
-   - Compute total energy demand from KLEM
-   - Apply AEEI to total energy demand
-   - Compute final demand by sector and carrier (nested logit trees)
-   - Compute electricity supply (preference logit + stock turnover + learning)
-   - Compute refining supply
-   - Compute hydrogen supply
-   - Update electricity, refined liquids, hydrogen prices
-   - Check convergence (relative price change < 0.001)
-   - Damped update (50% damping on new prices)
-4. **Compute energy cost and net output**
+   a. Compute CES energy demand: `E = E_base × (VA/VA_base) × (P_E/P_E_base)^(-σ)`
+   b. Apply AEEI factor
+   c. Compute CES gross output: `Y = VA`
+   d. Compute raw sector demands (income-driven, from logit trees)
+   e. Scale sector demands to match CES total (natural coupling)
+   f. Solve electricity supply (8-tech preference logit + vintage stock + learning)
+   g. Solve refining supply
+   h. Solve hydrogen supply
+   i. Update electricity, refined liquids, hydrogen prices
+   j. Update composite energy price (expenditure-weighted)
+   k. Check convergence (relative price change < 0.001)
+   l. Damped update (50% damping on new prices)
+4. **Compute energy cost** (expenditure-weighted composite × total EJ)
 5. **Compute emissions** (electricity + refining + hydrogen + direct combustion)
 6. **Revenue recycling** (if carbon pricing active)
-7. **Compute investment and update capital stock** for next period
+7. **Compute net output, investment, update capital** for next period
 
-### 6.2 Full Model Run (`run_model`)
+### 9.2 Composite Price Update Within Iteration
 
-```
+A subtle but important detail: the composite energy price is updated **within** the price iteration loop (step 3j). As electricity and hydrogen prices converge, the composite price shifts, which changes the CES energy demand, which changes sector demands, which changes supply-side prices. This inner loop typically converges in 3–5 iterations.
+
+### 9.3 Full Model Run (`run_model`)
+
+```python
 for year in [2000, 2005, ..., 2150]:
+    if trade_enabled:
+        clear_global_fuel_markets()  # bisection on coal, oil, gas
     for region in R10_REGIONS:
-        solve_period(region, year)
+        solve_period(region, year, trade_prices=...)
 ```
 
-With trade enabled, the solver first clears global fuel markets via the trade module (see `docs/trade.md`), then solves each region with the trade-determined delivered prices.
+With trade enabled, the solver first clears global fuel markets via the trade module, then solves each region with trade-determined delivered fuel prices.
 
 ---
 
-## 7. Final Demand Structure
+## 10. Trade Integration
 
-Final energy demand is decomposed into three sectors, each with a nested logit tree for fuel switching.
+The trade module affects the KLEM driver through **delivered fuel prices**. When trade is enabled:
 
-### 7.1 Sector Trees
+1. The trade module estimates regional fuel demands using `compute_primary_fuel_demand()` (which uses the same CES-KLE approach internally)
+2. Global market clearing via bisection determines world prices for coal, oil, gas
+3. Regional delivered prices = world price + transport cost
+4. `solve_period()` receives these delivered prices, which enter the composite energy price calculation
 
-**Industry** (income elasticity 0.6):
-```
-industry
- +-- heavy (45%, tau=30y)
- |   +-- coal 35%, gas 25%, electricity 15%, refined liquids 10%, biomass 10%, hydrogen 5%
- +-- light (45%, tau=30y)
- |   +-- electricity 40%, gas 25%, refined liquids 15%, coal 10%, biomass 8%, hydrogen 2%
- +-- data_centers (10%, tau=7y)
-     +-- electricity 100%
-```
-
-**Buildings** (income elasticity 0.5):
-```
-buildings
- +-- residential (55%, tau=50y)
- |   +-- electricity 35%, gas 30%, biomass 18%, refined liquids 12%, coal 4%, hydrogen 1%
- +-- commercial (45%, tau=50y)
-     +-- electricity 50%, gas 30%, refined liquids 8%, biomass 8%, coal 2%, hydrogen 2%
-```
-
-**Transport** (income elasticity 0.7):
-```
-transport
- +-- passenger (60%, tau=15y)
- |   +-- refined liquids 87%, electricity 5%, gas 4%, hydrogen 2%, biomass 2%
- +-- freight (40%, tau=15y)
-     +-- refined liquids 95%, gas 2%, electricity 1%, hydrogen 1%, biomass 1%
-```
-
-### 7.2 Fuel Switching Mechanism
-
-Each node uses **MERGE-style preference factor logit**:
+The CES energy demand responds to trade-determined prices with the same σ_KLE elasticity. This creates a consistent macro-energy-trade feedback:
 
 ```
-Share_i = exp(-k * (Cost_i + Pref_i)) / sum_j exp(-k * (Cost_j + Pref_j))
+Higher world oil price → higher composite P_E → lower E demand → lower oil demand
+→ lower world oil price (market clearing)
 ```
-
-- `k` = scale parameter (default 0.3 for fuel nodes, 0.05 for structural nodes)
-- `Cost_i` = levelized cost of fuel or subsector ($/GJ)
-- `Pref_i` = calibrated preference factor ($/GJ equivalent)
-
-Preference factors are calibrated at the base year so that the logit reproduces observed shares. Technologies with high observed shares despite high costs get negative (favorable) preference factors.
-
-### 7.3 Stock Turnover
-
-Shares don't jump to logit-determined targets instantly. Instead:
-
-```
-NewShare_i = OldShare_i + (TargetShare_i - OldShare_i) * (dt / tau)
-```
-
-where `tau` = sector-specific turnover time (years). For `dt = 5` years:
-- Transport (tau=15y): 33% toward target per period
-- Industry (tau=30y): 17% toward target per period
-- Buildings (tau=50y): 10% toward target per period
-- Electricity (tau=40y): 12.5% toward target per period
-
-This models the inertia of physical capital: existing vehicles, boilers, power plants.
-
-### 7.4 Total Demand Scaling
-
-Each sector's total energy demand scales with GDP:
-
-```
-E_sector(t) = E_sector_base * (GDP(t) / GDP_base)^eta
-```
-
-where `eta` is the sector-specific income elasticity. Sub-unitary elasticities (<1.0) mean energy demand grows slower than GDP (decoupling).
 
 ---
 
-## 8. Electricity Supply
+## 11. Design Decisions and Their Rationale
 
-The electricity sector uses 8 technologies competing via preference logit:
+### 11.1 Why CES and not Leontief or Cobb-Douglas?
 
-| Technology | Fuel Input | Efficiency | Base Capital Cost ($/kW) | Learning Rate |
-|-----------|-----------|------------|-------------------------|---------------|
-| coal | coal | 0.38 | 2000 | 0% |
-| gas_cc | gas | 0.55 | 1000 | 0% |
-| nuclear | nuclear | 0.33 | 5500 | 3% |
-| hydro | hydro | 1.00 | 3000 | 0% |
-| wind | wind | 1.00 | 1300 | 12% |
-| solar | solar | 1.00 | 1000 | 20% |
-| biomass | biomass | 0.30 | 2500 | 5% |
-| oil | oil | 0.35 | 1500 | 0% |
+- **Leontief (σ=0)**: Fixed energy/GDP ratio. Unrealistic — economies do reduce energy use when prices rise.
+- **Cobb-Douglas (σ=1)**: Too much substitution. Economies can't easily halve energy use when prices double.
+- **CES (σ=0.4)**: Moderate substitution. Empirically grounded in the GCAM/WITCH range of 0.3–0.5.
 
-### 8.1 Levelized Cost
+### 11.2 Why Y = VA (not CES(VA, E))?
+
+Energy's contribution to GDP is captured through the **cost feedback loop**, not through the production function output. This is equivalent to the "net output" interpretation used in DICE/RICE:
 
 ```
-LCOE = (CapitalCost * CRF) / (CF * 8760 * 3.6e-3) + FuelCost / Efficiency + O&M
+Y_gross = VA (how much the economy can produce)
+Y_net = VA - EnergyCost (how much is left after paying for energy)
 ```
 
-where:
-- `CRF` = capital recovery factor at 5% discount rate over plant lifetime
-- `CF` = capacity factor
-- `8760 * 3.6e-3` = conversion from $/kW to $/GJ (hours/year * GJ/kWh)
+The cost feedback approach avoids the unit-mismatch problem (Section 2.2) and is standard in IAM literature.
 
-### 8.2 Learning-by-Doing
+### 11.3 Why Expenditure-Weighted Price?
 
-Technologies with positive learning rates reduce capital cost with experience:
+Consider an economy using 80% cheap coal ($2/GJ) and 20% expensive electricity ($20/GJ):
 
-```
-Cost(t) = Cost_0 * (Q_cum(t) / Q_0)^(-learn_exp)
-```
+- **Arithmetic mean**: ($2 + $20) / 2 = $11/GJ — overstates the true energy cost
+- **Expenditure-weighted**: ($2×0.8 + $20×0.2) / 1.0 = $5.6/GJ — reflects actual spending
 
-where `learn_exp = ln(1 - LR) / ln(2)`. A 20% learning rate (solar) means cost drops 20% per cumulative capacity doubling. Costs are floored at 20% of initial cost.
+The expenditure-weighted price correctly represents the economy's actual energy cost burden.
+
+### 11.4 Why Regional LFP?
+
+The Middle East has 51% labor force participation (cultural factors, oil wealth) while Eastern Asia has 68%. Using the global average (65%) for both would:
+
+- Under-estimate Middle East TFP by ~22% (because the model thinks there's more labor than there is)
+- Over-estimate Eastern Asia TFP by ~5%
+
+Regional LFP fixes these biases and produces more realistic TFP trajectories.
 
 ---
 
-## 9. Parameters Reference
+## 12. Parameters Reference
 
 | Parameter | Symbol | Default | Source |
 |-----------|--------|---------|--------|
-| Capital share | alpha | 0.30 | Standard Cobb-Douglas |
-| Savings rate | s | 0.22 | Penn World Table avg |
-| Depreciation rate | delta | 0.05/yr | Standard assumption |
-| Investment cap | cap_rate | 0.10 | Prevents >10%/yr growth |
+| Capital share | α | 0.30 | Standard Solow growth model |
+| Savings rate | s | 0.22 | Penn World Table average |
+| Depreciation rate | δ | 0.05/yr | Standard assumption |
+| Investment cap | cap_rate | 0.10 | Prevents >10%/yr capital growth |
 | Capital-output ratio | K/Y | 3.0 | IMF WEO estimates |
-| Labor participation | LFP | 0.65 | ILO global average |
-| Energy-materials elasticity | sigma_em | 0.5 | WITCH/MERGE range |
+| VA-Energy substitution | σ_KLE | 0.4 | GCAM/WITCH range 0.3–0.5 |
+| Min energy cost share | — | 0.05 | Floor for calibration stability |
 | Timestep | dt | 5 years | GCAM convention |
-| Price damping | - | 0.5 | Solver stability |
-| Price tolerance | - | 0.001 | Convergence criterion |
-| Max price iterations | - | 100 | Safety bound |
-| Logit scale (fuels) | k | 0.3 | MERGE calibration |
-| Logit scale (structural) | k | 0.05 | Slow structural change |
+| Price damping | — | 0.5 | Solver stability |
+| Price tolerance | — | 0.001 | Convergence criterion |
+| Max price iterations | — | 100 | Safety bound |
 
 ---
 
-## 10. Data Sources
+## 13. Numerical Example
+
+A worked example for North America at the base year (2020):
+
+```
+Inputs:
+  GDP_SSP = 21,000 billion USD (PPP)
+  Population = 370 million
+  LFP = 0.61 (North America)
+  Total final energy = 37.0 EJ
+  Composite energy price = 7.5 $/GJ (expenditure-weighted)
+
+Capital stock:
+  K = 21,000 × 3.0 = 63,000 billion USD
+
+Labor:
+  L = 370 × 0.61 = 225.7 million
+
+TFP (calibrated):
+  KL = 63,000^0.3 × 225.7^0.7 = 5,073.6
+  A = 21,000 / 5,073.6 = 4.14
+
+Value Added:
+  VA = 4.14 × 63,000^0.3 × 225.7^0.7 = 21,000 billion USD  ✓
+
+CES Energy Demand (at base prices):
+  E = 37.0 × (21,000 / 21,000) × (7.5 / 7.5)^(-0.4) = 37.0 EJ  ✓
+
+If energy price doubles to 15.0 $/GJ:
+  E = 37.0 × 1.0 × (15.0 / 7.5)^(-0.4) = 37.0 × 0.758 = 28.0 EJ
+  → 24% demand reduction from 100% price increase
+
+Energy cost:
+  Cost = 28.0 × 15.0 = 420 billion USD
+  Cost share = 420 / 21,000 = 2.0%
+
+Net output:
+  Y_net = 21,000 - 420 = 20,580 billion USD
+
+Investment:
+  I = min(0.22 × 20,580, 0.10 × 63,000) = min(4,528, 6,300) = 4,528 billion USD/yr
+```
+
+---
+
+## 14. Data Sources
 
 | Data | Source | Path |
 |------|--------|------|
@@ -373,17 +538,18 @@ where `learn_exp = ln(1 - LR) / ln(2)`. A 20% learning rate (solar) means cost d
 | Historical data | "Historical Reference" scenario | same |
 | Region mapping | AR6 R10 classification | `ghim/data/external/region_classification.tsv` |
 | Base-year energy | Approximate IEA 2020 | `ghim/data/energy_cal.py` |
+| Labor force participation | ILO 2020 estimates | Hardcoded in `ghim/config.py` |
 
 ---
 
-## 11. Known Limitations
+## 15. Known Limitations
 
-1. **Global labor participation rate** — `LABOR_FORCE_PARTICIPATION` is a single global value (0.65) rather than region- and time-varying. This underestimates labor in high-participation economies and vice versa.
+1. **Zero population fallback** — If a region has zero population, TFP defaults to a fallback value rather than handling it gracefully (`klem.py:80`).
 
-2. **Zero population fallback** — If a region has zero population, TFP defaults to a fallback value rather than handling it gracefully (`klem.py:85-86`).
+2. **Price iteration non-convergence** — If the price iteration loop doesn't converge within 100 iterations, the solver silently continues with the last prices. No warning is emitted.
 
-3. **Price iteration non-convergence** — If the price iteration loop doesn't converge within 100 iterations, the solver silently continues with the last prices. No warning is emitted.
+3. **Approximate energy data** — Base-year energy values (`DEFAULT_PRIMARY_ENERGY`, `DEFAULT_ELEC_SHARES`, etc.) are approximate IEA 2020 values, not sourced from an actual IEA database extract.
 
-4. **PREF_DECAY_RATE defined but not wired** — The preference factor decay rate (0.02/yr) is defined in config but not applied during simulation. Preference factors remain at their base-year calibrated values.
+4. **LFP is time-invariant** — Regional labor force participation rates are fixed at 2020 values. In reality, LFP changes with economic development (tends to increase in developing regions, plateau in developed ones).
 
-5. **Approximate energy data** — Base-year energy values (`DEFAULT_PRIMARY_ENERGY`, `DEFAULT_ELEC_SHARES`, etc.) are approximate IEA 2020 values, not sourced from an actual IEA database extract.
+5. **Unitary aggregate income elasticity** — The CES FOC assumes E grows proportionally with VA at the aggregate level. Sector-specific elasticities (industry=0.6, buildings=0.5, transport=0.7) handle the composition effect, but the aggregate coupling always scales to match the CES total.

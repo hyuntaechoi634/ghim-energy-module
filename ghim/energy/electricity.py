@@ -2,7 +2,8 @@
 
 Computes electricity supply using preference-factor logit competition
 among coal, gas, nuclear, hydro, wind, solar, biomass, and oil technologies.
-Includes stock turnover and learning-by-doing.
+Includes vintage-bin stock turnover with S-curve retirement, pipeline-aware
+nuclear/hydro investment, and learning-by-doing.
 """
 
 from __future__ import annotations
@@ -13,13 +14,18 @@ from ghim.config import (
     ELEC_LOGIT_EXP, DISCOUNT_RATE, PREF_LOGIT_SCALE,
     TURNOVER_TIMES, TIMESTEP, HOURS_PER_YEAR,
     LOGIT_EXP_PREF, PREF_DECAY_RATES, BASE_YEAR,
+    TECH_RETIREMENT_LIFETIMES,
 )
 from ghim.energy.logit import (
     logit_shares, logit_calibrate,
     preference_logit, preference_calibrate,
     relative_pref_logit,
 )
-from ghim.energy.stock import apply_stock_turnover
+from ghim.energy.stock import (
+    apply_stock_turnover,
+    PipelineAwareVintageStock,
+    NUCLEAR_PIPELINE_R10,
+)
 from ghim.energy.technology import Technology, default_electricity_techs
 
 
@@ -36,12 +42,14 @@ class ElectricitySector:
         logit_exp: float = ELEC_LOGIT_EXP,
         scale_k: float = PREF_LOGIT_SCALE,
         turnover_time: float = TURNOVER_TIMES["electricity"],
+        region: str | None = None,
     ):
         self.techs = techs or default_electricity_techs()
         self.logit_exp = logit_exp
         self.scale_k = scale_k
         self.turnover_time = turnover_time
         self.total_generation_ej = 0.0
+        self.region = region
 
         # Preference factors (calibrated at base year)
         self.pref_factors: np.ndarray | None = None
@@ -50,12 +58,27 @@ class ElectricitySector:
         # Stock turnover state
         self.current_shares: np.ndarray | None = None
 
+        # Vintage stock (pipeline-aware for nuclear/hydro)
+        self.vintage_stock: PipelineAwareVintageStock | None = None
+
     @property
     def tech_names(self) -> list[str]:
         return [t.name for t in self.techs]
 
-    def calibrate(self, base_shares: dict[str, float], fuel_prices: dict[str, float]) -> None:
-        """Calibrate preference factors to reproduce base-year generation shares."""
+    def calibrate(
+        self,
+        base_shares: dict[str, float],
+        fuel_prices: dict[str, float],
+        gem_vintage_data: dict[str, dict[int, float]] | None = None,
+    ) -> None:
+        """Calibrate preference factors to reproduce base-year generation shares.
+
+        Parameters
+        ----------
+        gem_vintage_data : dict, optional
+            {tech: {vintage_year: ej}} from GEM preprocessing.
+            If provided, initializes vintage stock from GEM data.
+        """
         shares_arr = np.array([base_shares.get(t.name, 0.01) for t in self.techs])
         shares_arr = shares_arr / shares_arr.sum()
 
@@ -82,6 +105,27 @@ class ElectricitySector:
         for t, s in zip(self.techs, shares_arr):
             if t.cumulative_capacity == 0.0:
                 t.cumulative_capacity = t.base_cumulative
+
+        # Initialize vintage stock with pipeline awareness
+        self.vintage_stock = PipelineAwareVintageStock(
+            tech_names=self.tech_names,
+            lifetimes={t.name: TECH_RETIREMENT_LIFETIMES.get(t.name, 40.0)
+                       for t in self.techs},
+        )
+        if gem_vintage_data:
+            self.vintage_stock.initialize_from_gem(
+                gem_vintage_data, shares_arr, self.total_generation_ej, BASE_YEAR,
+            )
+        else:
+            self.vintage_stock.initialize_uniform(
+                shares_arr, self.total_generation_ej, BASE_YEAR,
+            )
+
+        # Pre-populate nuclear pipeline from WNA data
+        if self.region and self.region in NUCLEAR_PIPELINE_R10:
+            pipeline = NUCLEAR_PIPELINE_R10[self.region]
+            if pipeline:
+                self.vintage_stock.initialize_pipeline({"nuclear": pipeline})
 
     def _compute_pref_factors(
         self,
@@ -158,8 +202,14 @@ class ElectricitySector:
             weights = np.array([t.share_weight for t in self.techs])
             target_shares = logit_shares(costs, weights, self.logit_exp)
 
-        # Apply stock turnover
-        if self.current_shares is not None:
+        # Apply vintage stock turnover (S-curve retirement + new investment)
+        if self.vintage_stock is not None and year is not None:
+            effective_shares = self.vintage_stock.retire_and_invest(
+                year, target_shares, total_demand_ej,
+            )
+            self.current_shares = effective_shares
+        elif self.current_shares is not None:
+            # Fallback to simple share-blending if vintage stock not initialized
             effective_shares = apply_stock_turnover(
                 self.current_shares, target_shares, TIMESTEP, self.turnover_time,
             )

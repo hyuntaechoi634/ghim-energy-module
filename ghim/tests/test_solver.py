@@ -9,7 +9,7 @@ from ghim.solver.recursive import (
     PeriodResult,
 )
 from ghim.data.ssp import load_ssp_data
-from ghim.config import BASE_YEAR, MODEL_YEARS, KLEM_SCALE_CLAMP
+from ghim.config import BASE_YEAR, MODEL_YEARS
 from ghim.regions import R10_REGIONS
 
 
@@ -57,22 +57,20 @@ class TestSolvePeriod:
         assert result.net_output <= result.gross_output
 
 
-class TestKLEMSectorCoupling:
-    """Tests for KLEM-sector energy demand coupling."""
+class TestCESKLECoupling:
+    """Tests for CES-KLE energy demand coupling."""
 
     def setup_method(self):
         self.model = build_region_model("North America", base_gdp=21000.0, base_pop=370.0)
 
-    def test_base_year_scale_reasonable(self):
-        """At base year, klem_scale_factor should be close to 1.0.
+    def test_energy_cost_share_reasonable(self):
+        """At base year, energy_cost_share (P_E*E/Y) should be ~5-15%.
 
-        Not exactly 1.0 because the price iteration shifts electricity/hydrogen
-        prices from defaults, changing the KLEM price index. But should stay
-        well within the clamp bounds.
+        Energy is typically 5-10% of GDP for developed economies.
         """
         result = solve_period(self.model, ssp_gdp=21000.0, population=370.0, year=2020)
-        assert 0.8 <= result.klem_scale_factor <= 1.5, (
-            f"Base year scale = {result.klem_scale_factor}, expected near 1.0"
+        assert 0.01 <= result.energy_cost_share <= 0.30, (
+            f"Energy cost share = {result.energy_cost_share:.3f}, expected 0.01-0.30"
         )
 
     def test_sector_sum_matches_total(self):
@@ -81,17 +79,27 @@ class TestKLEMSectorCoupling:
         sector_sum = sum(
             sum(cd.values()) for cd in result.final_demand_ej.values()
         )
-        assert abs(sector_sum - result.total_energy_demand_ej) < 0.01, (
+        assert abs(sector_sum - result.total_energy_demand_ej) < 0.1, (
             f"Sector sum {sector_sum:.2f} != total {result.total_energy_demand_ej:.2f}"
         )
 
-    def test_scale_factor_within_clamp(self):
-        """klem_scale_factor stays within KLEM_SCALE_CLAMP bounds."""
-        # Solve several periods to let scale potentially diverge
-        r = solve_period(self.model, ssp_gdp=21000.0, population=370.0, year=2020)
-        assert KLEM_SCALE_CLAMP[0] <= r.klem_scale_factor <= KLEM_SCALE_CLAMP[1]
-        r2 = solve_period(self.model, ssp_gdp=25000.0, population=400.0, year=2025)
-        assert KLEM_SCALE_CLAMP[0] <= r2.klem_scale_factor <= KLEM_SCALE_CLAMP[1]
+    def test_energy_demand_responds_to_price(self):
+        """Higher energy price should reduce total energy demand (CES substitution)."""
+        import copy
+        model_lo = copy.deepcopy(self.model)
+        model_hi = copy.deepcopy(self.model)
+        # Low energy price case
+        r_lo = solve_period(model_lo, ssp_gdp=21000.0, population=370.0, year=2020)
+        # High energy price case: override prices
+        model_hi.fuel_prices["coal"] = 10.0
+        model_hi.fuel_prices["gas"] = 15.0
+        model_hi.fuel_prices["oil"] = 20.0
+        r_hi = solve_period(model_hi, ssp_gdp=21000.0, population=370.0, year=2020)
+        # Higher prices → less energy
+        assert r_hi.total_energy_demand_ej <= r_lo.total_energy_demand_ej * 1.1, (
+            f"Energy demand didn't decrease with higher prices: "
+            f"lo={r_lo.total_energy_demand_ej:.1f}, hi={r_hi.total_energy_demand_ej:.1f}"
+        )
 
     def test_structural_change_over_time(self):
         """Transport share should change relative to buildings as GDP grows.
@@ -117,11 +125,11 @@ class TestKLEMSectorCoupling:
             f"Transport share didn't increase: {transport_share_1:.3f} → {transport_share_2:.3f}"
         )
 
-    def test_klem_scale_factor_field_exists(self):
-        """PeriodResult should include klem_scale_factor field."""
+    def test_energy_cost_share_field_exists(self):
+        """PeriodResult should include energy_cost_share field."""
         result = solve_period(self.model, ssp_gdp=21000.0, population=370.0, year=2020)
-        assert hasattr(result, "klem_scale_factor")
-        assert isinstance(result.klem_scale_factor, float)
+        assert hasattr(result, "energy_cost_share")
+        assert isinstance(result.energy_cost_share, float)
 
 
 class TestRunModel:

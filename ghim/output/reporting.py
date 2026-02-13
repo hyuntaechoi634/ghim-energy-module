@@ -42,6 +42,11 @@ def results_to_dataframe(results: list[PeriodResult]) -> pd.DataFrame:
         # Electricity generation by tech
         for tech, ej in r.electricity_gen_ej.items():
             base[f"elec_{tech}_ej"] = ej
+        # Vintage stock tracking
+        for tech, ej in r.new_investment_ej.items():
+            base[f"new_invest_{tech}_ej"] = ej
+        for tech, ej in r.surviving_capacity_ej.items():
+            base[f"surviving_{tech}_ej"] = ej
         rows.append(base)
     return pd.DataFrame(rows)
 

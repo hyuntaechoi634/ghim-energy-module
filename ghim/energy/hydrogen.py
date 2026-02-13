@@ -1,8 +1,8 @@
 """Hydrogen production sector model.
 
 Produces hydrogen via SMR (gas) and electrolysis (electricity),
-using preference-factor logit competition with stock turnover
-and learning-by-doing.
+using preference-factor logit competition with vintage-bin stock
+turnover (S-curve retirement) and learning-by-doing.
 """
 
 from __future__ import annotations
@@ -13,13 +13,14 @@ from ghim.config import (
     HYDROGEN_LOGIT_EXP, PREF_LOGIT_SCALE,
     TURNOVER_TIMES, TIMESTEP, HOURS_PER_YEAR,
     LOGIT_EXP_PREF, PREF_DECAY_RATES, BASE_YEAR,
+    TECH_RETIREMENT_LIFETIMES,
 )
 from ghim.energy.logit import (
     logit_shares, logit_calibrate,
     preference_logit, preference_calibrate,
     relative_pref_logit,
 )
-from ghim.energy.stock import apply_stock_turnover
+from ghim.energy.stock import apply_stock_turnover, VintageStock
 from ghim.energy.technology import Technology, default_hydrogen_techs
 
 
@@ -49,6 +50,9 @@ class HydrogenSector:
 
         # Stock turnover state
         self.current_shares: np.ndarray | None = None
+
+        # Vintage stock
+        self.vintage_stock: VintageStock | None = None
 
     @property
     def tech_names(self) -> list[str]:
@@ -86,6 +90,16 @@ class HydrogenSector:
         for t, s in zip(self.techs, shares_arr):
             if t.cumulative_capacity == 0.0:
                 t.cumulative_capacity = t.base_cumulative
+
+        # Initialize vintage stock (uniform — no GEM data for hydrogen)
+        self.vintage_stock = VintageStock(
+            tech_names=self.tech_names,
+            lifetimes={t.name: TECH_RETIREMENT_LIFETIMES.get(t.name, 30.0)
+                       for t in self.techs},
+        )
+        self.vintage_stock.initialize_uniform(
+            shares_arr, max(self.total_output_ej, 0.01), BASE_YEAR,
+        )
 
     def _compute_pref_factors(
         self,
@@ -160,8 +174,13 @@ class HydrogenSector:
             weights = np.array([t.share_weight for t in self.techs])
             target_shares = logit_shares(costs, weights, self.logit_exp)
 
-        # Apply stock turnover
-        if self.current_shares is not None:
+        # Apply vintage stock turnover (S-curve retirement + new investment)
+        if self.vintage_stock is not None and year is not None:
+            effective_shares = self.vintage_stock.retire_and_invest(
+                year, target_shares, max(demand_ej, 0.01),
+            )
+            self.current_shares = effective_shares
+        elif self.current_shares is not None:
             effective_shares = apply_stock_turnover(
                 self.current_shares, target_shares, TIMESTEP, self.turnover_time,
             )

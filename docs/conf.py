@@ -33,3 +33,12 @@ html_static_path = ["_static"]
 
 # MyST settings
 myst_heading_anchors = 3
+
+# MathJax: pin to v3 (well-tested with MyST + Sphinx)
+mathjax_path = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+mathjax3_config = {
+    "tex": {
+        "inlineMath": [["\\(", "\\)"]],
+        "displayMath": [["\\[", "\\]"]],
+    },
+}

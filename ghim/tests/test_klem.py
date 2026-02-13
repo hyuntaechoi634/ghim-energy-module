@@ -5,7 +5,7 @@ import numpy as np
 
 from ghim.econ.klem import KLEMDriver
 from ghim.config import (
-    BASE_YEAR, MODEL_YEARS, HISTORICAL_YEARS, FUTURE_YEARS,
+    BASE_YEAR, MODEL_YEARS, SOLVE_YEARS, FUTURE_YEARS,
     CAPITAL_OUTPUT_RATIO, CAPITAL_SHARE, SAVINGS_RATE,
     DEPRECIATION_RATE, TIMESTEP,
     SIGMA_KLE, REGIONAL_LFP, LABOR_FORCE_PARTICIPATION,
@@ -76,11 +76,19 @@ class TestKLEMInit:
 # ===========================================================================
 
 class TestTFPTrajectory:
-    def test_covers_all_years(self):
+    def test_covers_solve_years(self):
+        """TFP trajectory should cover BASE_YEAR + all FUTURE_YEARS."""
         d = _make_driver()
         d.init_tfp_trajectory(_ssp_constant(1000.0), _ssp_constant(100.0))
-        for year in MODEL_YEARS:
+        for year in SOLVE_YEARS:
             assert year in d._tfp_trajectory
+
+    def test_no_historical_years(self):
+        """TFP trajectory should NOT include historical years (2000-2015)."""
+        d = _make_driver()
+        d.init_tfp_trajectory(_ssp_constant(1000.0), _ssp_constant(100.0))
+        assert 2000 not in d._tfp_trajectory
+        assert 2015 not in d._tfp_trajectory
 
     def test_all_tfp_positive(self):
         d = _make_driver()
@@ -89,50 +97,29 @@ class TestTFPTrajectory:
             assert a > 0, f"TFP at {year} = {a} (should be > 0)"
 
     def test_base_year_tfp_matches_init(self):
-        """TFP at BASE_YEAR from trajectory should be close to the initial calibration."""
+        """TFP at BASE_YEAR from trajectory should equal the initial calibration."""
         d = _make_driver(gdp=1000.0, pop=100.0)
         init_tfp = d.tfp
         d.init_tfp_trajectory(_ssp_constant(1000.0), _ssp_constant(100.0))
         traj_tfp = d._tfp_trajectory[BASE_YEAR]
-        assert traj_tfp == pytest.approx(init_tfp, rel=0.05)
+        assert traj_tfp == pytest.approx(init_tfp, rel=1e-6)
 
     def test_growing_gdp_produces_increasing_tfp(self):
         """With growing GDP but constant population, TFP should trend upward."""
         d = _make_driver(gdp=1000.0, pop=100.0)
         gdp_path = _ssp_growing(start=1000.0, growth=0.03)
         d.init_tfp_trajectory(gdp_path, _ssp_constant(100.0))
-        first_tfp = d._tfp_trajectory[MODEL_YEARS[0]]
-        last_tfp = d._tfp_trajectory[MODEL_YEARS[-1]]
+        first_tfp = d._tfp_trajectory[BASE_YEAR]
+        last_tfp = d._tfp_trajectory[SOLVE_YEARS[-1]]
         assert last_tfp > first_tfp
 
-
-# ===========================================================================
-# TestHistoricalKBackSolve
-# ===========================================================================
-
-class TestHistoricalKBackSolve:
-    def test_k2000_less_than_k2020(self):
-        """With constant GDP, backward-solved K(2000) should be < K(2020)
-        because capital accumulated over 2000-2020."""
+    def test_capital_stock_unchanged_after_calibration(self):
+        """Capital stock should remain at K(BASE_YEAR) after TFP calibration.
+        (No backward solve, no reset to K(2000).)"""
         d = _make_driver(gdp=1000.0, pop=100.0)
+        k_before = d.capital_stock
         d.init_tfp_trajectory(_ssp_constant(1000.0), _ssp_constant(100.0))
-        tfp_2000 = d._tfp_trajectory[2000]
-        tfp_2020 = d._tfp_trajectory[BASE_YEAR]
-        assert tfp_2000 > tfp_2020, (
-            f"TFP(2000)={tfp_2000:.4f} should be > TFP(2020)={tfp_2020:.4f} "
-            "because K(2000) < K(2020)"
-        )
-
-    def test_historical_tfp_higher_than_base(self):
-        """All historical TFP values should be >= base-year TFP
-        (smaller K with same GDP requires higher A)."""
-        d = _make_driver(gdp=1000.0, pop=100.0)
-        d.init_tfp_trajectory(_ssp_constant(1000.0), _ssp_constant(100.0))
-        base_tfp = d._tfp_trajectory[BASE_YEAR]
-        for year in HISTORICAL_YEARS:
-            assert d._tfp_trajectory[year] >= base_tfp * 0.99, (
-                f"TFP({year})={d._tfp_trajectory[year]:.4f} should be >= {base_tfp:.4f}"
-            )
+        assert d.capital_stock == pytest.approx(k_before)
 
 
 # ===========================================================================
@@ -263,22 +250,18 @@ class TestEnergyCostShareBounded:
 # ===========================================================================
 
 class TestEdgeCases:
-    def test_missing_historical_gdp_uses_base(self):
-        """If SSP dict is missing historical years, should fall back to base_gdp."""
+    def test_missing_future_gdp_uses_base(self):
+        """If SSP dict is sparse, should fall back to base_gdp."""
         d = _make_driver(gdp=500.0, pop=50.0)
-        sparse_gdp = {y: 500.0 + (y - BASE_YEAR) * 10 for y in FUTURE_YEARS}
-        sparse_pop = {y: 50.0 for y in FUTURE_YEARS}
+        # Only provide a few future years
+        sparse_gdp = {2030: 600.0, 2050: 800.0}
+        sparse_pop = {2030: 50.0, 2050: 50.0}
         d.init_tfp_trajectory(sparse_gdp, sparse_pop)
-        for year in MODEL_YEARS:
+        for year in SOLVE_YEARS:
             assert d._tfp_trajectory[year] > 0
 
-    def test_future_tfp_uses_base_year_k(self):
-        """TFP should not spike at the historical→future boundary.
-
-        Regression test: a bug caused forward TFP calibration to use K(2000)
-        instead of K(BASE_YEAR), producing inflated TFP that caused a GDP
-        surge at the 2020→2025 transition.
-        """
+    def test_tfp_smooth_at_base_to_future(self):
+        """TFP should not spike at 2020→2025 boundary."""
         d = _make_driver(gdp=5000.0, pop=500.0)
         gdp_path = _ssp_growing(start=3000.0, growth=0.02)
         pop_path = _ssp_growing(start=400.0, growth=0.005)

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ghim.config import (
-    MODEL_YEARS, BASE_YEAR, TIMESTEP,
+    MODEL_YEARS, SOLVE_YEARS, BASE_YEAR, TIMESTEP,
     PRICE_TOL, MAX_PRICE_ITER, PRICE_DAMP,
     TC_TO_TCO2, CARBON_COEFS,
 )
@@ -907,10 +907,10 @@ def run_model(
         except Exception:
             trade_module = None
 
-    # Solve period by period
+    # Solve period by period (base year + future only, no historical)
     all_results: list[PeriodResult] = []
     prev_trade_prices: dict[str, dict[str, float]] | None = None
-    for year in MODEL_YEARS:
+    for year in SOLVE_YEARS:
         # Check if emissions cap requires bisection on carbon price
         cap_active = policy.emissions_cap.has_cap(year)
         global_cap = None

@@ -9,7 +9,7 @@ from ghim.solver.recursive import (
     PeriodResult,
 )
 from ghim.data.ssp import load_ssp_data
-from ghim.config import BASE_YEAR, MODEL_YEARS
+from ghim.config import BASE_YEAR, SOLVE_YEARS
 from ghim.regions import R10_REGIONS
 
 
@@ -136,7 +136,7 @@ class TestRunModel:
     def test_full_run(self):
         ssp_data = load_ssp_data("SSP2")
         results = run_model(ssp_data, "SSP2")
-        expected = len(R10_REGIONS) * len(MODEL_YEARS)
+        expected = len(R10_REGIONS) * len(SOLVE_YEARS)
         assert len(results) == expected
 
     def test_base_year_emissions_sanity(self):

@@ -103,46 +103,22 @@ class KLEMDriver:
     ) -> None:
         """Pre-compute TFP so that Y_model ≈ Y_SSP without energy shocks.
 
-        Two-step algorithm:
-        1. **Backward K solve** — invert capital accumulation from K(BASE_YEAR)
-           back through historical years to get K(HISTORY_START).
-        2. **Forward TFP calibration** — starting from K(HISTORY_START), evolve K
-           forward and back out A(t) = Y_SSP / (K^α * L^(1-α)) at each period.
+        Forward-only algorithm starting from K(BASE_YEAR):
+        1. A(BASE_YEAR) is already calibrated in __init__.
+        2. Evolve a reference K forward using the savings rate and SSP GDP.
+        3. At each future year, back out A(t) = Y_SSP / (K^α * L^(1-α)).
+
+        The reference K trajectory represents "what K would be if the economy
+        followed the SSP path with no energy shocks."  During simulation,
+        actual K diverges through the energy cost feedback loop.
         """
         decay = (1.0 - DEPRECIATION_RATE) ** TIMESTEP
 
-        # --- Step 1: backward solve for historical K ---
-        historical_years_desc = list(reversed(HISTORICAL_YEARS[:-1]))
-        k_hist: dict[int, float] = {BASE_YEAR: self.capital_stock}
+        # Base year: TFP already calibrated in __init__
+        self._tfp_trajectory = {BASE_YEAR: self.tfp}
 
-        k_next = self.capital_stock
-        for year in historical_years_desc:
-            y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
-            inv = min(self.savings_rate * y_ssp, self.investment_cap_rate * k_next)
-            k_prev = (k_next - inv * TIMESTEP) / decay
-            k_prev = max(k_prev, 0.01 * y_ssp)
-            k_hist[year] = k_prev
-            k_next = k_prev
-
-        # --- Step 2: TFP calibration ---
-        self._tfp_trajectory = {}
-
-        # Historical years: use backward-solved K directly
-        for year in HISTORICAL_YEARS:
-            y_ssp = ssp_gdp_by_year.get(year, self.base_gdp)
-            pop = pop_by_year.get(year, self.base_population)
-            labor = pop * self.lfp
-            k_ref = k_hist[year]
-
-            kl = k_ref ** self.alpha * labor ** (1.0 - self.alpha)
-            a = y_ssp / kl if kl > 0 else self.tfp
-            self._tfp_trajectory[year] = a
-
-        # Set initial capital stock to K(HISTORY_START)
-        self.capital_stock = k_hist[HISTORICAL_YEARS[0]]
-
-        # Future years: forward-evolve K from BASE_YEAR
-        k_ref = k_hist[BASE_YEAR]
+        # Forward-evolve reference K from K(BASE_YEAR)
+        k_ref = self.capital_stock
         for year in FUTURE_YEARS:
             prev_year = year - TIMESTEP
             y_prev = ssp_gdp_by_year.get(prev_year, self.base_gdp)

@@ -214,59 +214,44 @@ To compute A(t) we need K(t). But K(t) depends on past investment, which depends
 K(2020) = GDP(2020) × 3.0 = 63,000 billion USD  (for North America)
 ```
 
-What is K(2000)? K(2010)? K(2050)? We need to reconstruct the entire K trajectory from this single anchor point.
+What is K(2025)? K(2050)? K(2100)? We need to reconstruct the **future** K trajectory from this single anchor point.
 
-### 5.3 The Two-Step Algorithm
+### 5.3 The Forward-Only Algorithm
 
-The solution is a two-pass algorithm: go backward from K(2020) to get historical K, then go forward to get future K.
+The model solves from BASE_YEAR (2020) onward — there are no historical solve years (GCAM-style: historical periods are calibration data, not solved). TFP calibration is therefore forward-only:
 
-**Step 1: Backward K Solve (2020 → 2000)**
+**Step 1: Base Year A(2020)**
 
-The capital accumulation law is:
-
+Already calibrated in `__init__`:
 ```
-K(t+5) = 0.7738 × K(t) + I(t) × 5
-```
-
-where `0.7738 = (1-0.05)^5` is the 5-year decay factor. We can invert this:
-
-```
-K(t) = (K(t+5) - I(t) × 5) / 0.7738
+A(2020) = Y_SSP(2020) / (K(2020)^α × L(2020)^(1-α))
 ```
 
-Investment at each historical period uses SSP GDP:
+**Step 2: Construct Reference K Trajectory (2025 → 2150)**
 
-```
-I(t) = min(0.22 × Y_SSP(t), 0.10 × K(t+5))
-```
+We ask: *"If the economy perfectly followed the SSP GDP path, what would K look like?"*
 
-Starting from K(2020) = 63,000, we walk backward:
-
+Starting from K(2020), evolve forward using the standard accumulation law:
 ```
-K(2015) = (63,000 - min(0.22 × Y_SSP(2015), 0.10 × 63,000) × 5) / 0.7738
-K(2010) = (K(2015) - I(2010) × 5) / 0.7738
-...
-K(2000) = smallest (least capital in the past)
+K_ref(t+5) = 0.7738 × K_ref(t) + I_ref(t) × 5
 ```
 
-A floor of `0.01 × Y_SSP(t)` prevents negative capital. The result is a historically consistent capital trajectory: K(2000) < K(2005) < ... < K(2020).
-
-**Step 2: Forward TFP Calibration (2000 → 2150)**
-
-Now we have K at every year. For each period, back out TFP:
-
+where `0.7738 = (1-0.05)^5` is the 5-year decay factor, and the **reference investment** is:
 ```
-A(t) = Y_SSP(t) / (K(t)^0.3 × L(t)^0.7)
+I_ref(t) = min(s × Y_SSP(t), cap_rate × K_ref(t))
+         = min(0.22 × Y_SSP(t), 0.10 × K_ref(t))
 ```
 
-- **Historical years (2000–2020)**: Use the backward-solved K values directly
-- **Future years (2025–2150)**: Evolve K forward from K(2020) using the standard accumulation law:
-  ```
-  K(t+5) = 0.7738 × K(t) + I_ref(t) × 5
-  I_ref(t) = min(0.22 × Y_SSP(t), 0.10 × K(t))
-  ```
+This is **not measured** — it's a constructed quantity answering: *"How much would the economy invest if GDP followed the SSP path?"* The savings rate (s=0.22) is a structural parameter from Penn World Table / World Bank data. The cap rate (0.10) prevents unrealistic jumps.
 
-**Reset**: After calibration, the solver's capital stock is reset to K(2000) so the recursive solver starts from the correct historical position and re-accumulates capital through 2000→2005→...→2150.
+**Step 3: Back Out A(t) for Each Future Year**
+
+Given K_ref(t), L(t), and Y_SSP(t):
+```
+A(t) = Y_SSP(t) / (K_ref(t)^0.3 × L(t)^0.7)
+```
+
+**No reset needed**: Capital stock stays at K(2020) after calibration. The solver starts from 2020 and accumulates forward — the reference K used in calibration is discarded.
 
 ### 5.4 Worked Example (North America, SSP2)
 
@@ -278,53 +263,50 @@ Base year (2020):
   L = 370 × 0.61 = 225.7
   KL = 63,000^0.3 × 225.7^0.7 = 5,073.6
   A(2020) = 21,000 / 5,073.6 = 4.14
-
-Backward solve to 2015:
-  I(2015) = min(0.22 × 21,000, 0.10 × 63,000) = min(4,620, 6,300) = 4,620
-  K(2015) = (63,000 - 4,620 × 5) / 0.7738 = (63,000 - 23,100) / 0.7738 = 51,565
-
-TFP at 2015:
-  KL = 51,565^0.3 × 225.7^0.7 = 4,716.5
-  A(2015) = 21,000 / 4,716.5 = 4.45   ← higher than A(2020) = 4.14 ✓
-
-Why? K(2015) < K(2020), so more TFP is needed to explain the same GDP.
 ```
 
 For **future years** with growing GDP (e.g., Y_SSP grows 2%/year):
 
 ```
-Forward K from 2020:
-  I_ref(2020) = min(0.22 × 21,000, 0.10 × 63,000) = 4,620
-  K(2025) = 0.7738 × 63,000 + 4,620 × 5 = 48,749 + 23,100 = 71,849
+Reference K at 2025:
+  I_ref(2020) = min(0.22 × 21,000, 0.10 × 63,000) = min(4,620, 6,300) = 4,620
+  K_ref(2025) = 0.7738 × 63,000 + 4,620 × 5 = 48,749 + 23,100 = 71,849
 
 TFP at 2025 (with Y_SSP = 23,178):
   KL = 71,849^0.3 × 225.7^0.7 = 5,267.8
   A(2025) = 23,178 / 5,267.8 = 4.40
+
+Reference K at 2030:
+  I_ref(2025) = min(0.22 × 23,178, 0.10 × 71,849) = min(5,099, 7,185) = 5,099
+  K_ref(2030) = 0.7738 × 71,849 + 5,099 × 5 = 55,597 + 25,495 = 81,092
+
+TFP at 2030 (with Y_SSP = 25,593):
+  KL = 81,092^0.3 × 225.7^0.7 = 5,459.2
+  A(2030) = 25,593 / 5,459.2 = 4.69
 ```
 
-The full TFP trajectory looks like:
+The full TFP trajectory:
 
 ```
-Year:  2000   2005   2010   2015   2020   2025   2030   ...   2100
-A(t):  4.85   4.68   4.55   4.45   4.14   4.40   4.55   ...   5.30
-                                    ↑
-                              anchor point
+Year:  2020   2025   2030   2035   ...   2100
+A(t):  4.14   4.40   4.69   4.95   ...   5.30
+        ↑
+  anchor point
 ```
 
-Historical A > base A (less capital requires more productivity). Future A rises as GDP grows faster than K×L.
+Future A rises as GDP grows faster than K×L.
 
-### 5.5 Why the Anchor at 2020 Matters
+### 5.5 Why the Anchor at K(2020) Matters
 
-A critical design choice: **both backward and forward K trajectories use K(2020) as the anchor**.
+A critical design choice: the reference K trajectory starts from **K(2020)**, the model's base-year capital stock.
 
-- Backward: starts from K(2020), walks back to K(2000)
-- Forward: starts from K(2020), walks forward to K(2150)
+This ensures **continuity**: the K that the solver uses at 2020 is exactly the K used to calibrate A(2020), which is exactly the K that seeds the reference trajectory for future A(t). There is no gap or reset.
 
-This ensures **no discontinuity** at the 2020→2025 boundary. An earlier bug used K(2000) for forward calibration instead of K(2020), which produced an inflated K₀ → wrong TFP → GDP spike at the historical-to-future transition.
+An earlier version used a backward K solve to reconstruct historical K(2000)–K(2015), then ran the solver from 2000 through 2150. This was unnecessarily complex — historical years are calibration data in GCAM, not periods that need to be solved.
 
 ### 5.6 What Happens During Simulation
 
-Once the TFP trajectory `{2000: 4.85, 2005: 4.68, ..., 2150: 5.30}` is computed, it is **frozen**. At each period, the solver looks up A(t) and uses it with the *current* (endogenous) K:
+Once the TFP trajectory `{2020: 4.14, 2025: 4.40, ..., 2150: 5.30}` is computed, it is **frozen**. At each period, the solver looks up A(t) and uses it with the *current* (endogenous) K:
 
 ```
 Reference case (no policy):
@@ -339,10 +321,11 @@ The TFP trajectory acts as the "potential growth" path. The actual economy devia
 
 ### 5.7 Properties of the Calibrated TFP
 
-- **Historical TFP ≥ base-year TFP** (less K in the past → higher A needed)
+- **A(BASE_YEAR) reproduces base GDP exactly** (by construction)
 - **Monotonically increasing in the future** for growing GDP with constant population
-- **No discontinuity** at the 2020→2025 boundary (both sides anchored at K(2020))
+- **No discontinuity** (single anchor at K(2020), forward-only)
 - **Robust to SSP scenario**: works for SSP1 (fast growth), SSP3 (slow growth), etc.
+- **Capital stock unchanged** after calibration (no reset to historical values)
 
 ---
 
@@ -513,14 +496,14 @@ A subtle but important detail: the composite energy price is updated **within** 
 ### 9.3 Full Model Run (`run_model`)
 
 ```python
-for year in [2000, 2005, ..., 2150]:
+for year in [2020, 2025, 2030, ..., 2150]:   # SOLVE_YEARS (no historical)
     if trade_enabled:
         clear_global_fuel_markets()  # bisection on coal, oil, gas
     for region in R10_REGIONS:
         solve_period(region, year, trade_prices=...)
 ```
 
-With trade enabled, the solver first clears global fuel markets via the trade module, then solves each region with trade-determined delivered fuel prices.
+The solver runs from BASE_YEAR (2020) onward — historical years (2000–2015) are not solved. This follows the GCAM convention where historical periods contain calibration data, not model-determined outcomes. With trade enabled, the solver first clears global fuel markets via the trade module, then solves each region with trade-determined delivered fuel prices.
 
 ---
 

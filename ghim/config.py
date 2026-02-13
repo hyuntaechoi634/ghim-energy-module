@@ -21,6 +21,7 @@ TIMESTEP: int = 5  # years
 HISTORICAL_YEARS: list[int] = list(range(HISTORY_START, BASE_YEAR + 1, TIMESTEP))
 FUTURE_YEARS: list[int] = list(range(BASE_YEAR + TIMESTEP, END_YEAR + 1, TIMESTEP))
 MODEL_YEARS: list[int] = HISTORICAL_YEARS + FUTURE_YEARS
+SOLVE_YEARS: list[int] = [BASE_YEAR] + FUTURE_YEARS  # solver runs from base year onward
 NUM_PERIODS: int = len(MODEL_YEARS)
 
 # ---------------------------------------------------------------------------

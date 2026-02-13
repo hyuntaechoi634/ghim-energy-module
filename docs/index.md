@@ -14,7 +14,9 @@ The model combines a **DICE-style endogenous GDP** engine ($Y = AK^\alpha L^{1-\
 
 overview
 mathematical_framework
+klem
 energy_supply_chain
+trade
 solver
 ```
 

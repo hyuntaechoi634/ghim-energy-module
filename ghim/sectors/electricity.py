@@ -329,13 +329,16 @@ class OOPElectricitySector(TransformationSector):
         )
 
         # Variable cost per tech (for profit shutdown):
-        # fuel/eff + VOM + pref_cost (unobservable cost, unit-converted)
-        # Logit exponent: exp(β × C/k + P) → effective cost = C + P×k/β
+        # fuel/eff + VOM + FOM/GJ + pref_cost (unobservable cost)
+        # FOM is NOT sunk — real ongoing cost for keeping plant open.
+        # Logit exponent: exp(β × C/k + P) → pref_cost = P×k/β ($/GJ)
         pref_cost_factor = self.scale_k / self.logit_exp if self.logit_exp != 0 else 0.0
         var_costs = np.array([
             (rs.raw_fuel_prices.get(t.fuel_input, 0.0) / t.efficiency
              if t.efficiency > 0 else 0.0)
             + t.vom
+            + (t.fom / (t.capacity_factor * 8760 * 3.6e-3)
+               if t.capacity_factor > 0 else 0.0)
             + (pf[i] * pref_cost_factor if pf is not None else 0.0)
             for i, t in enumerate(self.techs)
         ])

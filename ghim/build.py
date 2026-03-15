@@ -664,6 +664,7 @@ def build_oop_model(
     ssp_data: dict[str, Any],
     scenario: str = "SSP2",
     policy: Any = None,
+    time_cfg: dict[str, int] | None = None,
 ) -> tuple[GHIMModel, PeriodState, DampedSolver]:
     """Build GHIMModel with OOP sectors for all R32 regions.
 
@@ -719,7 +720,7 @@ def build_oop_model(
         gdp_target = {}
         pop_series = {}
         for year in MODEL_YEARS:
-            if use_gcam_gdp:
+            if calibrator.available:
                 g = calibrator.get_gdp(year, region_name)
                 if g is not None and g > 0:
                     gdp_target[year] = g
@@ -790,6 +791,7 @@ def build_oop_model(
     )
     model.bunkers = bunkers
     model.calibrator = calibrator  # type: ignore[attr-defined]
+    model._time_cfg = time_cfg or {"cal_end": 2100, "run_end": 2150}  # type: ignore[attr-defined]
 
     # Exogenous GDP trajectory per region
     # GCAM: MER billion US$2010 | AR6: PPP billion US$2005
@@ -801,7 +803,7 @@ def build_oop_model(
         gdp_target_series[region_name] = {}
         ssp_pop_series[region_name] = {}
         for year in MODEL_YEARS:
-            if use_gcam_gdp:
+            if calibrator.available:
                 g = calibrator.get_gdp(year, region_name)
                 if g is not None and g > 0:
                     exogenous_gdp[region_name][year] = g
@@ -948,6 +950,33 @@ def _apply_calibration(
     if calibrator is None or not calibrator.available:
         return
 
+    # Post-calibration: skip full recalibration, optionally decay pref_weight
+    _tcfg = getattr(model, "_time_cfg", {})
+    _cal_end = _tcfg.get("cal_end", 2100)
+    _run_end = _tcfg.get("run_end", 2150)
+    _post_mode = _tcfg.get("post_cal_mode", "decay")
+
+    if period > _cal_end:
+        if _post_mode == "decay" and _run_end > _cal_end:
+            # Linear decay: pref_weight → 0 by run_end
+            t = (period - _cal_end) / (_run_end - _cal_end)
+            decay = max(1.0 - t, 0.0)
+            for region_name, region in model.regions.items():
+                for sector in region.demand_sectors:
+                    if hasattr(sector, '_cal_end_pref_weight'):
+                        sector.sector_pref_weight = (
+                            sector._cal_end_pref_weight * decay
+                        )
+                    # Release inline recal targets gradually
+                    if decay < 0.01:
+                        for sub in sector.subsectors:
+                            if hasattr(sub, '_target_svc_shares'):
+                                sub._target_svc_shares = None
+                for sector in region.transformation:
+                    if decay < 0.01 and hasattr(sector, '_target_tech_shares'):
+                        sector._target_tech_shares = None
+        # HOLD mode: keep pref_weight + targets, release generation_target
+        return
 
     for region_name, region in model.regions.items():
         rs = state.regions[region_name]
@@ -978,25 +1007,13 @@ def _apply_calibration(
                         )
                         sector._target_tech_shares /= sector._target_tech_shares.sum()
 
-                # Generation scaling: GCAM gen includes T&D losses + own-use
-                if hasattr(calibrator, 'get_elec_generation'):
-                    target_gen = calibrator.get_elec_generation(period, region_name)
-                    if target_gen is not None and target_gen > 0:
-                        sector._generation_target = target_gen
+                # T&D + ownuse loss rate (replaces _generation_target)
+                sector._td_loss_rate = calibrator.get_elec_td_loss(
+                    period, region_name,
+                )
 
-            # --- Hydrogen sector ---
-            if isinstance(sector, OOPHydrogenSector):
-                if hasattr(calibrator, 'get_h2_production'):
-                    target = calibrator.get_h2_production(period, region_name)
-                    if target is not None and target > 0:
-                        sector._generation_target = target
-
-            # --- District heat sector ---
-            if isinstance(sector, DistrictHeatingSector):
-                if hasattr(calibrator, 'get_heat_production'):
-                    target = calibrator.get_heat_production(period, region_name)
-                    if target is not None and target > 0:
-                        sector._generation_target = target
+            # H2/heat: no T&D loss (direct delivery)
+            # _generation_target removed — demand-driven
 
         # --- Demand sectors ---
         for sector in region.demand_sectors:
@@ -1182,14 +1199,16 @@ def oop_run_model(
     ssp_data: dict[str, Any],
     scenario: str = "SSP2",
     policy: Any = None,
+    time_cfg: dict[str, int] | None = None,
 ) -> list[PeriodState]:
     """Run the OOP model for all R32 regions, all periods.
 
     SSP data should be R32-aggregated (from load_ssp_data_r32).
     Returns a list of PeriodState (one per period).
     """
-    model, state, solver = build_oop_model(ssp_data, scenario, policy,
-                                            )
+    model, state, solver = build_oop_model(
+        ssp_data, scenario, policy, time_cfg=time_cfg,
+    )
 
     pop_df = ssp_data["population"]
     gdp_df = ssp_data["gdp"]
@@ -1210,7 +1229,14 @@ def oop_run_model(
     results: list[PeriodState] = []
     is_first_period = True
 
-    for period in FUTURE_YEARS:
+    # Determine run years from time_cfg
+    _tcfg = model._time_cfg
+    _cal_end = _tcfg.get("cal_end", 2100)
+    _run_end = _tcfg.get("run_end", FUTURE_YEARS[-1])
+    _post_cal_mode = _tcfg.get("post_cal_mode", "decay")
+    run_years = [y for y in FUTURE_YEARS if y <= _run_end]
+
+    for period in run_years:
         state.period = period
         for name, rs in state.regions.items():
             if period in pop_df.columns:
@@ -1254,6 +1280,12 @@ def oop_run_model(
             if _fe_round < _FE_RECAL_ROUNDS - 1:
                 _apply_calibration(model, state, period)
                 state.period = period  # restore after recal
+
+        # Snapshot cal_end pref_weights for post-calibration decay
+        if period == _cal_end:
+            for name, region in model.regions.items():
+                for sector in region.demand_sectors:
+                    sector._cal_end_pref_weight = sector.sector_pref_weight
 
         # GDP tracking diagnostic (endogenous mode)
         if model.exogenous_gdp is None:

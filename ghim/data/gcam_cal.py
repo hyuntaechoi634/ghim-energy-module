@@ -583,6 +583,23 @@ def load_gcam_calibration(
                 if gen > 0:
                     elec_generation[region][int(year)] = float(gen)
 
+    # --- Electricity T&D+ownuse combined loss rate ---
+    elec_td_loss: dict[str, dict[int, float]] = {}
+    for region in regions:
+        elec_td_loss[region] = {}
+        for yr in elec_generation.get(region, {}):
+            gen = elec_generation[region][yr]
+            if gen <= 0:
+                continue
+            fe_elec = 0.0
+            scs = sector_carrier_shares.get(region, {}).get(yr, {})
+            sts = sector_totals.get(region, {}).get(yr, {})
+            for sec_name, sec_shares in scs.items():
+                sec_total = sts.get(sec_name, 0)
+                fe_elec += sec_shares.get("electricity", 0) * sec_total
+            if gen > fe_elec and fe_elec > 0:
+                elec_td_loss[region][yr] = 1.0 - fe_elec / gen
+
     return CalibrationDataset(
         model_name=model_name,
         source=source,
@@ -601,6 +618,7 @@ def load_gcam_calibration(
         subsector_totals=subsector_totals,
         subsector_carrier_shares=subsector_carrier_shares,
         elec_generation=elec_generation,
+        elec_td_loss=elec_td_loss,
         heat_production=heat_production,
         h2_production=h2_production,
     )

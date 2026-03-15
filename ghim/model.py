@@ -237,10 +237,10 @@ class GHIMModel:
             # Sectors read carbon_price from rs, subsidies from policy
             for sector in region.transformation:
                 demand = rs.final_demand.get(sector.carrier_output, 0.0)
-                # Use GCAM generation target if available (includes T&D losses)
-                gen_target = getattr(sector, '_generation_target', None)
-                if gen_target is not None and demand > 0:
-                    demand = gen_target
+                # Electricity: add T&D + ownuse losses
+                td_loss = getattr(sector, '_td_loss_rate', 0.0)
+                if td_loss > 0 and demand > 0:
+                    demand = demand / (1.0 - td_loss)
                 gen = sector.compute_supply(rs, demand, self.policy)
 
                 # 4a. Tech constraints: post-logit share clamping

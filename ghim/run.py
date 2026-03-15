@@ -56,7 +56,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--run-end", type=int, default=None,
-        help="Last model year (default: last calibration year)",
+        help="Last model year (default: last calibration year, e.g. 2150)",
+    )
+    parser.add_argument(
+        "--post-cal-mode", default="decay",
+        choices=["decay", "hold"],
+        help="Post-calibration pref_weight behavior (default: decay to 0)",
     )
     args = parser.parse_args()
 
@@ -80,8 +85,18 @@ def main() -> None:
     ssp_data = load_ssp_data_r32(args.scenario)
     print(f"Running model for {len(ssp_data['population'])} regions...")
 
+    from ghim.calibration import CalibrationConfig, PostCalMode, make_calibrator
+    cal_config = CalibrationConfig(
+        calibrate=not args.no_calibrate,
+        run_end=args.run_end,
+        post_cal_mode=PostCalMode(args.post_cal_mode),
+    )
+    _, time_cfg = make_calibrator(cal_config)
+
     from ghim.build import oop_run_model
-    period_states = oop_run_model(ssp_data, args.scenario, policy=policy)
+    period_states = oop_run_model(
+        ssp_data, args.scenario, policy=policy, time_cfg=time_cfg,
+    )
 
     from ghim.output.oop_reporting import oop_print_summary, oop_export_csv
     oop_print_summary(period_states)

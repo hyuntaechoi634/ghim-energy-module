@@ -31,6 +31,7 @@ Usage
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,11 @@ class CalibrationDataset:
     # Electricity generation totals: region → year → EJ
     # (includes T&D losses, own-use — larger than FE electricity demand)
     elec_generation: dict[str, dict[int, float]] = field(default_factory=dict)
+
+    # Electricity T&D+ownuse combined loss rate: region → year → fraction
+    # loss_rate = 1 - (FE_electricity / generation)
+    # Applied as: generation = FE_demand / (1 - loss_rate)
+    elec_td_loss: dict[str, dict[int, float]] = field(default_factory=dict)
 
     # Transformation sector production: region → year → EJ
     # Derived from demand-side data: Σ(sector_total × carrier_share) across sectors
@@ -205,6 +211,12 @@ def _expand_carrier_shares_to_techs(
 # CalibrationConfig — user-facing configuration
 # ---------------------------------------------------------------------------
 
+class PostCalMode(str, Enum):
+    """Post-calibration preference weight behavior."""
+    DECAY = "decay"    # linear decay to 0 by run_end (default)
+    HOLD = "hold"      # keep cal_end values constant
+
+
 @dataclass
 class CalibrationConfig:
     """Configuration for the calibration pipeline.
@@ -225,6 +237,10 @@ class CalibrationConfig:
         Last calibration year. Auto-detected from dataset if None.
     run_end : int or None
         Last model year. Default = cal_end. Set to 2150 for projection.
+    post_cal_mode : PostCalMode
+        What to do with preference weights after cal_end.
+        DECAY = linear decay to 0 by run_end (default).
+        HOLD = keep cal_end values constant.
     dataset_path : str or None
         Path to custom calibration data directory. If None, uses
         built-in GCAM-v8.2 SSP2-Ref.
@@ -237,6 +253,7 @@ class CalibrationConfig:
     cal_start: int | None = None
     cal_end: int | None = None
     run_end: int | None = None
+    post_cal_mode: PostCalMode = PostCalMode.DECAY
     dataset_path: str | None = None
     params_file: str | None = None
 
@@ -295,6 +312,7 @@ def make_calibrator(
     time_info = {
         "cal_start": cal_start,
         "cal_end": cal_end,
+        "post_cal_mode": config.post_cal_mode.value,
         "run_end": run_end,
     }
 
@@ -493,6 +511,16 @@ class Calibrator:
         """Target electricity generation (EJ/yr), incl. T&D losses."""
         year_data = self.dataset.elec_generation.get(region_r32, {})
         return _interpolate_scalar(year_data, year)
+
+    def get_elec_td_loss(
+        self,
+        year: int,
+        region_r32: str,
+    ) -> float:
+        """T&D+ownuse combined loss rate (fraction, 0-1)."""
+        year_data = self.dataset.elec_td_loss.get(region_r32, {})
+        val = _interpolate_scalar(year_data, year)
+        return val if val is not None else 0.1  # default 10%
 
     def get_heat_production(
         self,

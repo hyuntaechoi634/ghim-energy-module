@@ -307,6 +307,23 @@ class VintageTracker:
                 continue
             self._init_uniform_single(tech, target_ej, base_year)
 
+    def initialize_single_vintage(
+        self,
+        shares: np.ndarray,
+        total_ej: float,
+        base_year: int,
+    ) -> None:
+        """All capacity as single base-year vintage (GCAM-style).
+
+        No historical age distribution — all plants are age 0 at base year.
+        S-curve retirement begins only as plants age from this point.
+        """
+        shares = np.asarray(shares, dtype=float)
+        for i, tech in enumerate(self.tech_names):
+            cap = shares[i] * total_ej
+            if cap > 0:
+                self._capacity[tech][base_year] = cap
+
     def initialize_from_gem(
         self,
         gem_data: dict[str, dict[int, float]],

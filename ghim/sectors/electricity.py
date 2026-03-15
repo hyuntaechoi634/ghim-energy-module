@@ -329,15 +329,17 @@ class OOPElectricitySector(TransformationSector):
         )
 
         # Variable cost per tech (for profit shutdown):
-        # fuel/eff + VOM + pref_weight (unobservable cost)
+        # fuel/eff + VOM + pref_cost (unobservable cost, unit-converted)
+        # Logit exponent: exp(β × C/k + P) → effective cost = C + P×k/β
+        pref_cost_factor = self.scale_k / self.logit_exp if self.logit_exp != 0 else 0.0
         var_costs = np.array([
             (rs.raw_fuel_prices.get(t.fuel_input, 0.0) / t.efficiency
              if t.efficiency > 0 else 0.0)
             + t.vom
-            + (pf[i] if pf is not None else 0.0)  # unobservable cost
+            + (pf[i] * pref_cost_factor if pf is not None else 0.0)
             for i, t in enumerate(self.techs)
         ])
-        var_costs = np.maximum(var_costs, 0.0)
+        var_costs = np.maximum(var_costs, 0.01)
 
         # Market price = share-weighted LCOE (current period)
         mkt_price = float(np.dot(target_shares, lcoe))

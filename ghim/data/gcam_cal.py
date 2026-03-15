@@ -351,6 +351,7 @@ def get_gcam_sector_carrier_shares(
 # Main loader: build CalibrationDataset (batch, vectorized)
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=4)
 def load_gcam_calibration(
     source: str = "GCAM-v8.2",
     scenario: str = "SSP2-Ref",

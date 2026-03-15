@@ -303,6 +303,7 @@ class TestOOPRunLoop:
 # Endogenous GDP validation
 # ===========================================================================
 
+@pytest.mark.slow
 class TestEndogenousGDP:
     """Test that endogenous GDP (two-pass TFP) tracks SSP trajectory."""
 

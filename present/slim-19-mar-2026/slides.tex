@@ -1495,12 +1495,12 @@ Data loading (Parquet $\to$ \texttt{pandas}) & 0.9s \\
 TFP calibration & 36s \\
 {\scriptsize \quad 4 passes $\times$ 26 periods} & \\
 \rowcolor{SpruceGreen!8}
-Forward solve & 42s \\
-{\scriptsize \quad 26 periods $\times$ $\sim$1.6s/period} & \\
-{\scriptsize \quad 3 FE recal rounds + inline recal} & \\
+Forward solve & 14s \\
+{\scriptsize \quad 26 periods $\times$ $\sim$0.5s/period} & \\
+{\scriptsize \quad 2 FE recal rounds + inline recal} & \\
 {\scriptsize \quad per iter: $F(\mathbf{x})$ over 32 regions} & \\
 \midrule
-\textbf{Total} & \textbf{$\sim$79s} \\
+\textbf{Total} & \textbf{$\sim$50s} \\
 \bottomrule
 \end{tabular}
 
@@ -1611,7 +1611,7 @@ Forward solve & 42s \\
 % ── Val 2: FE by Sector ─────────────────────────────────────────
 \begin{frame}[t]{Calibration --- Final Energy by Sector}
 \vspace{-0.3em}
-{\small \textbf{FE: CC\,=\,1.0000, MAE\,=\,0.7\,EJ} (MAPE $<0.1\%$). All sectors 0\% deviation 2025--2100.}
+{\small \textbf{FE}: All sectors $\pm$1\% (2025--2100). Post-2100: endogenous projection with TFP extrapolation.}
 \vspace{0.2em}
 
 \centering

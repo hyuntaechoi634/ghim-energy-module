@@ -1,0 +1,26 @@
+\frametitle{Calibration Bootstrap (2/2): Endogenous Verification}
+\vspace{-0.3em}
+
+\begin{tcolorbox}[enhanced, colback=gray!3, colframe=gray!60, top=6pt, bottom=6pt, left=8pt, right=8pt, fonttitle=\small\bfseries, title=Pass 2+: Endogenous GDP (verify convergence)]
+\footnotesize
+\textrm{CES now determines GDP. Check if it matches SSP; iterate if not.}\\[4pt]
+\ttfamily
+model.gdp\_mode = ENDOGENOUS \hfill\textrm{\footnotesize// CES determines GDP}\\[3pt]
+\textbf{repeat}:\\
+\quad\quad solve\_all\_periods(model)\\[2pt]
+\quad\quad max\_dev = max\textrm{$_{\,r,t}$}
+  |GDP(r,t) - GDP\textrm{$_\text{SSP}$}(r,t)| / GDP\textrm{$_\text{SSP}$}\\[2pt]
+\quad\quad \textbf{if} max\_dev < 2\%: \textbf{break}\\[2pt]
+\quad\quad ref\_price = record\_energy\_prices()\\
+\quad\quad re\_calibrate\_tfp(ref\_price)
+\end{tcolorbox}
+
+\vspace{0.3em}
+\begin{tcolorbox}[enhanced, colback=SpruceGreen!6, colframe=SpruceGreen, boxrule=0.8pt, arc=3pt, left=5pt, right=5pt, top=4pt, bottom=4pt, fonttitle=\small\bfseries, title=Result]
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+Without bootstrap (constant-price TFP): & 7--14\% GDP deviation \\
+With two-pass bootstrap: & $< 0.2\%$ GDP deviation \\
+\end{tabular}
+\end{tcolorbox}
+

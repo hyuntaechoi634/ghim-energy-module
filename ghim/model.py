@@ -144,6 +144,7 @@ class GHIMModel:
                     sub.pref_factors = preference_calibrate(
                         tgt, costs, sub.logit_scale,
                     )
+                    sub.calibration_year = period  # prevent decay
 
             raw_demands: dict[str, float] = {}
             _sector_names = {

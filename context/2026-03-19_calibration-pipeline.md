@@ -121,9 +121,19 @@ Full calibration pipeline restructuring for H2, district heat, demand carrier sh
 
 ## Next Steps When Resuming
 
-1. Check FOM test results (background task bvvb2cp33)
-2. Run full validation with FOM included
-3. Consider: is coal gap acceptable? Or need stronger mechanism?
-4. Legacy cleanup (AR6Calibrator removal, calibrator parameterization)
-5. Buildings subsector independent demand functions (gcamdata A44 params)
-6. Slide updates with final results
+### Refactor (높은 우선순위)
+1. **AR6 완전 삭제** — AR6Calibrator class, ar6_cal.py, is_native_r32 분기, R5 매핑 전부 제거
+2. **Calibrator 모수화** — `--cal-source GCAM-v8.2 --cal-scenario SSP2-Ref` CLI, dataset만 바꾸면 어떤 모형/시나리오든 calibration 가능
+3. **Calibration 연도 모수화**:
+   - `cal_start_year`: 데이터셋 시작 (1975, 2000, 2005 등)
+   - `cal_end_year`: 데이터셋 끝 (2100)
+   - `run_end_year`: 모형 실행 끝 (2150)
+   - cal_start~cal_end: calibration target 적용 (pref 보정, pref_weight, gen target)
+   - cal_end~run_end: calibration 없이 자유 전개 (학습된 preference carry forward)
+   - 현재 BASE_YEAR=2021, FUTURE_YEARS 고정 → 이것도 데이터셋에서 자동 결정
+4. **DEFAULT_ELEC_SHARES 등 R10 legacy dict 삭제** — GCAM fallback으로 대체 완료
+5. R10은 trade module에서만 사용 → 유지
+
+### 모형 개선
+6. **Buildings subsector 독립 수요함수** (gcamdata A44 파라미터) — Phase 1 scope
+7. Hydro 자원 제약 (max generation cap)

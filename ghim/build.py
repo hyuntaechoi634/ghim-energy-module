@@ -1027,15 +1027,6 @@ def _apply_calibration(
             if sector_ar6 is None:
                 continue
 
-            # Set industry _last_demand_ej from GCAM target (stable reference
-            # for income elasticity curve, avoids solver feedback oscillation)
-            if isinstance(sector, IndustrySector):
-                ind_target = calibrator.get_sector_total(
-                    period, sector_ar6, region_name,
-                )
-                if ind_target is not None and ind_target > 0:
-                    sector._last_demand_ej = ind_target
-
             # --- Carrier share recalibration ---
             # For buildings with subsector data: use per-subsector shares
             has_subsector = (
@@ -1319,6 +1310,15 @@ def oop_run_model(
             for sector in region.transformation:
                 if hasattr(sector, "vintage") and sector.vintage is not None:
                     sector.vintage.prune_retired(period)
+
+            # Demand sector: carry forward converged demand for next period
+            for sector in region.demand_sectors:
+                if hasattr(sector, '_last_demand_ej'):
+                    sd = rs.sector_demand.get(
+                        _SECTOR_AR6_NAME.get(type(sector).__name__), {},
+                    )
+                    if sd:
+                        sector._last_demand_ej = sum(sd.values())
 
         # --- TechChange: learning curve updates (gap #2) ---
         if model.tech_change is not None:

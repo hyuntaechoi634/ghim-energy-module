@@ -105,21 +105,34 @@ class PeriodState:
     #   Total: 4 × n_regions + 5
     # ------------------------------------------------------------------
 
+    # Per-region vector layout (10 dims each):
+    #   0: GDP, 1: price_ELEC, 2: price_GAS, 3: price_LIQUIDS,
+    #   4: price_H2, 5: price_HEAT, 6: price_COAL,
+    #   7: raw_COAL, 8: raw_OIL, 9: raw_GAS
+    _VEC_PER_REGION = 10
+
     def to_vector(self) -> np.ndarray:
-        """Pack solver state into a flat numpy vector."""
+        """Pack solver state into a flat numpy vector (325 dims for 32 regions)."""
         names = sorted(self.regions.keys())
         n = len(names)
-        vec = np.empty(4 * n + 5)
+        k = self._VEC_PER_REGION
+        vec = np.empty(k * n + 5)
 
         for i, name in enumerate(names):
             rs = self.regions[name]
-            base = i * 4
-            vec[base] = rs.gdp
-            vec[base + 1] = rs.carrier_prices.get(Carrier.ELECTRICITY, 20.0)
-            vec[base + 2] = rs.carrier_prices.get(Carrier.GAS, 5.0)
-            vec[base + 3] = rs.carrier_prices.get(Carrier.LIQUIDS, 12.0)
+            b = i * k
+            vec[b] = rs.gdp
+            vec[b + 1] = rs.carrier_prices.get(Carrier.ELECTRICITY, 20.0)
+            vec[b + 2] = rs.carrier_prices.get(Carrier.GAS, 5.0)
+            vec[b + 3] = rs.carrier_prices.get(Carrier.LIQUIDS, 12.0)
+            vec[b + 4] = rs.carrier_prices.get(Carrier.H2, 15.0)
+            vec[b + 5] = rs.carrier_prices.get(Carrier.HEAT, 10.0)
+            vec[b + 6] = rs.carrier_prices.get(Carrier.COAL, 3.0)
+            vec[b + 7] = rs.raw_fuel_prices.get(Carrier.COAL, 2.5)
+            vec[b + 8] = rs.raw_fuel_prices.get(Carrier.OIL, 8.0)
+            vec[b + 9] = rs.raw_fuel_prices.get(Carrier.GAS, 4.0)
 
-        g = 4 * n
+        g = k * n
         vec[g] = self.world_prices.get(Carrier.COAL, 2.5)
         vec[g + 1] = self.world_prices.get(Carrier.OIL, 8.0)
         vec[g + 2] = self.world_prices.get(Carrier.GAS, 4.0)
@@ -131,16 +144,23 @@ class PeriodState:
         """Unpack solver state from a flat numpy vector (in-place)."""
         names = sorted(self.regions.keys())
         n = len(names)
+        k = self._VEC_PER_REGION
 
         for i, name in enumerate(names):
             rs = self.regions[name]
-            base = i * 4
-            rs.gdp = float(vec[base])
-            rs.carrier_prices[Carrier.ELECTRICITY] = float(vec[base + 1])
-            rs.carrier_prices[Carrier.GAS] = float(vec[base + 2])
-            rs.carrier_prices[Carrier.LIQUIDS] = float(vec[base + 3])
+            b = i * k
+            rs.gdp = float(vec[b])
+            rs.carrier_prices[Carrier.ELECTRICITY] = float(vec[b + 1])
+            rs.carrier_prices[Carrier.GAS] = float(vec[b + 2])
+            rs.carrier_prices[Carrier.LIQUIDS] = float(vec[b + 3])
+            rs.carrier_prices[Carrier.H2] = float(vec[b + 4])
+            rs.carrier_prices[Carrier.HEAT] = float(vec[b + 5])
+            rs.carrier_prices[Carrier.COAL] = float(vec[b + 6])
+            rs.raw_fuel_prices[Carrier.COAL] = float(vec[b + 7])
+            rs.raw_fuel_prices[Carrier.OIL] = float(vec[b + 8])
+            rs.raw_fuel_prices[Carrier.GAS] = float(vec[b + 9])
 
-        g = 4 * n
+        g = k * n
         self.world_prices[Carrier.COAL] = float(vec[g])
         self.world_prices[Carrier.OIL] = float(vec[g + 1])
         self.world_prices[Carrier.GAS] = float(vec[g + 2])
@@ -150,4 +170,4 @@ class PeriodState:
     @property
     def state_dim(self) -> int:
         """Dimensionality of the solver state vector."""
-        return 4 * len(self.regions) + 5
+        return self._VEC_PER_REGION * len(self.regions) + 5

@@ -861,11 +861,16 @@ def build_oop_model(
         model.exogenous_gdp = None
         logger.info("Endogenous GDP enabled — CES determines GDP")
 
-    # Solver — damped fixed-point (Anderson deferred: needs full state vector)
-    solver = DampedSolver(
-        alpha=0.3, tol=5e-3, max_iter=80,
-        skip_gdp=True,
-    )
+    # Solver options: "damped" (default, faster) or "anderson" (more robust)
+    solver_type = (time_cfg or {}).get("solver", "damped")
+    if solver_type == "anderson":
+        solver = AndersonSolver(
+            m=5, beta=0.5, tol=5e-3, max_iter=50, skip_gdp=True,
+        )
+    else:
+        solver = DampedSolver(
+            alpha=0.3, tol=5e-3, max_iter=150, skip_gdp=True,
+        )
 
     return model, initial_state, solver
 
@@ -1253,12 +1258,9 @@ def oop_run_model(
             state.period = period
             is_first_period = False
 
-        # Solve with FE recalibration loop: _demand_scale computed at
-        # pre-solver prices may be wrong after convergence (price
-        # elasticity shifts demand).  Re-calibrate and re-solve until
-        # FE matches AR6 targets within tolerance.
+        # Recalibration loop: preferences calibrated at pre-solver prices
+        # may drift after convergence. Re-calibrate and re-solve.
         _FE_RECAL_ROUNDS = 2
-        _FE_RECAL_TOL = 0.02  # 2%
         for _fe_round in range(_FE_RECAL_ROUNDS):
             # Emissions cap: bisection wrapper if policy has a cap for this period
             if (policy is not None

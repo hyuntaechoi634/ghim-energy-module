@@ -26,7 +26,7 @@ from ghim.core.region import Region
 from ghim.core.state import PeriodState, RegionState
 from ghim.econ.klem import KLEMDriver
 from ghim.model import GHIMModel
-from ghim.solver.damped import DampedSolver
+from ghim.solver.damped import DampedSolver, AndersonSolver
 from ghim.adapters.base import (
     DefaultClimateAdapter,
     DefaultWaterAdapter,
@@ -861,9 +861,9 @@ def build_oop_model(
         model.exogenous_gdp = None
         logger.info("Endogenous GDP enabled — CES determines GDP")
 
-    # Solver — skip_gdp=True either way (GDP is derived, not iterated)
+    # Solver — damped fixed-point (Anderson deferred: needs full state vector)
     solver = DampedSolver(
-        alpha=0.3, tol=5e-3, max_iter=150,
+        alpha=0.3, tol=5e-3, max_iter=80,
         skip_gdp=True,
     )
 
@@ -1257,7 +1257,7 @@ def oop_run_model(
         # pre-solver prices may be wrong after convergence (price
         # elasticity shifts demand).  Re-calibrate and re-solve until
         # FE matches AR6 targets within tolerance.
-        _FE_RECAL_ROUNDS = 3
+        _FE_RECAL_ROUNDS = 2
         _FE_RECAL_TOL = 0.02  # 2%
         for _fe_round in range(_FE_RECAL_ROUNDS):
             # Emissions cap: bisection wrapper if policy has a cap for this period

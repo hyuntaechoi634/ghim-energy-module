@@ -325,11 +325,9 @@ class TestCalibrator:
 
 
 # ---------------------------------------------------------------------------
-# Protocol compliance: Calibrator has same interface as AR6Calibrator
 # ---------------------------------------------------------------------------
 
 class TestProtocolCompliance:
-    """Both AR6Calibrator and Calibrator must expose the same methods."""
 
     REQUIRED_METHODS = [
         "available",
@@ -351,10 +349,3 @@ class TestProtocolCompliance:
         for method in self.REQUIRED_METHODS:
             assert hasattr(cal, method), f"Calibrator missing {method}"
 
-    def test_ar6_has_all_methods(self):
-        from ghim.calibration import AR6Calibrator
-        # Don't load data, just check methods exist on class
-        for method in self.REQUIRED_METHODS:
-            assert hasattr(AR6Calibrator, method) or \
-                   any(method in cls.__dict__ for cls in AR6Calibrator.__mro__), \
-                   f"AR6Calibrator missing {method}"

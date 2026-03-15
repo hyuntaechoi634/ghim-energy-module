@@ -49,10 +49,14 @@ def main() -> None:
         "--no-trade", action="store_true",
         help="Disable inter-regional primary energy trade",
     )
+    # Calibration arguments
     parser.add_argument(
-        "--calibrator", default="ar6",
-        choices=["ar6", "gcam"],
-        help="Calibration data source: ar6 (AR6 MESSAGE-GLOBIOM) or gcam (GCAM v8.2 Reference)",
+        "--no-calibrate", action="store_true",
+        help="Skip calibration (load saved params instead)",
+    )
+    parser.add_argument(
+        "--run-end", type=int, default=None,
+        help="Last model year (default: last calibration year)",
     )
     args = parser.parse_args()
 
@@ -77,8 +81,7 @@ def main() -> None:
     print(f"Running model for {len(ssp_data['population'])} regions...")
 
     from ghim.build import oop_run_model
-    period_states = oop_run_model(ssp_data, args.scenario, policy=policy,
-                                   calibrator_type=args.calibrator)
+    period_states = oop_run_model(ssp_data, args.scenario, policy=policy)
 
     from ghim.output.oop_reporting import oop_print_summary, oop_export_csv
     oop_print_summary(period_states)

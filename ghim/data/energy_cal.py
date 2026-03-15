@@ -85,41 +85,6 @@ DEFAULT_PRIMARY_ENERGY: dict[str, dict[str, float]] = {
     "Africa":               {"coal": 4.0, "gas": 6.5, "oil": 7.5, "nuclear": 0.15, "hydro": 1.0, "wind": 0.1, "solar": 0.1, "biomass": 10.0, "geothermal": 0.1},
 }
 
-DEFAULT_ELEC_SHARES: dict[str, dict[str, float]] = {
-    "North America":        {"coal": 0.20, "gas_cc": 0.40, "nuclear": 0.20, "hydro": 0.07, "wind": 0.08, "solar": 0.03, "biomass": 0.01, "oil": 0.01},
-    "Europe":               {"coal": 0.15, "gas_cc": 0.20, "nuclear": 0.25, "hydro": 0.12, "wind": 0.15, "solar": 0.06, "biomass": 0.06, "oil": 0.01},
-    "Asia-Pacific Developed":{"coal": 0.25, "gas_cc": 0.30, "nuclear": 0.15, "hydro": 0.08, "wind": 0.04, "solar": 0.08, "biomass": 0.05, "oil": 0.05},
-    "Eurasia":              {"coal": 0.15, "gas_cc": 0.45, "nuclear": 0.18, "hydro": 0.18, "wind": 0.01, "solar": 0.005, "biomass": 0.01, "oil": 0.015},
-    "Eastern Asia":         {"coal": 0.62, "gas_cc": 0.03, "nuclear": 0.05, "hydro": 0.17, "wind": 0.06, "solar": 0.04, "biomass": 0.02, "oil": 0.01},
-    "Southern Asia":        {"coal": 0.70, "gas_cc": 0.04, "nuclear": 0.03, "hydro": 0.10, "wind": 0.05, "solar": 0.05, "biomass": 0.02, "oil": 0.01},
-    "South-East Asia and developing Pacific": {"coal": 0.35, "gas_cc": 0.30, "nuclear": 0.02, "hydro": 0.10, "wind": 0.02, "solar": 0.02, "biomass": 0.05, "oil": 0.14},
-    "Middle East":          {"coal": 0.01, "gas_cc": 0.65, "nuclear": 0.005, "hydro": 0.02, "wind": 0.005, "solar": 0.01, "biomass": 0.0, "oil": 0.30},
-    "Latin America and Caribbean": {"coal": 0.05, "gas_cc": 0.20, "nuclear": 0.02, "hydro": 0.55, "wind": 0.08, "solar": 0.03, "biomass": 0.05, "oil": 0.02},
-    "Africa":               {"coal": 0.30, "gas_cc": 0.30, "nuclear": 0.02, "hydro": 0.18, "wind": 0.03, "solar": 0.02, "biomass": 0.03, "oil": 0.12},
-}
 
-DEFAULT_ELEC_TOTAL_EJ: dict[str, float] = {
-    "North America":         18.5,
-    "Europe":                13.0,
-    "Asia-Pacific Developed": 7.5,
-    "Eurasia":                5.5,
-    "Eastern Asia":          28.0,
-    "Southern Asia":          6.0,
-    "South-East Asia and developing Pacific": 5.0,
-    "Middle East":            4.5,
-    "Latin America and Caribbean": 5.0,
-    "Africa":                 3.5,
-}
-
-DEFAULT_FINAL_DEMAND: dict[str, dict[str, float]] = {
-    "North America":        {"industry": 18.0, "buildings": 20.0, "transport": 28.0},
-    "Europe":               {"industry": 13.0, "buildings": 18.0, "transport": 14.0},
-    "Asia-Pacific Developed":{"industry": 8.0, "buildings": 7.0, "transport": 6.0},
-    "Eurasia":              {"industry": 10.0, "buildings": 10.0, "transport": 6.0},
-    "Eastern Asia":         {"industry": 45.0, "buildings": 15.0, "transport": 15.0},
-    "Southern Asia":        {"industry": 12.0, "buildings": 8.0, "transport": 5.0},
-    "South-East Asia and developing Pacific": {"industry": 10.0, "buildings": 6.0, "transport": 6.0},
-    "Middle East":          {"industry": 8.0, "buildings": 5.0, "transport": 8.0},
-    "Latin America and Caribbean": {"industry": 8.0, "buildings": 5.0, "transport": 10.0},
-    "Africa":               {"industry": 4.0, "buildings": 8.0, "transport": 4.0},
-}
+# DEFAULT_ELEC_SHARES, DEFAULT_ELEC_TOTAL_EJ, DEFAULT_FINAL_DEMAND
+# removed — replaced by GCAM-v8.2 SSP2-Ref fallback in build.py.

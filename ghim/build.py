@@ -46,14 +46,8 @@ from ghim.sectors.refining import RefinedOilSector
 from ghim.sectors.bunkers import BunkersSector
 
 from ghim.regions_r32 import R32_REGIONS, R32_TO_R10, r10_to_r32_members
-from ghim.data.energy_cal import (
-    DEFAULT_PRIMARY_ENERGY,
-    DEFAULT_ELEC_SHARES,
-    DEFAULT_ELEC_TOTAL_EJ,
-    DEFAULT_FINAL_DEMAND,
-)
-from ghim.calibration import AR6Calibrator, Calibrator
-from ghim.data.ar6_cal import R32_TO_R5, R5_TO_R32
+from ghim.data.energy_cal import DEFAULT_PRIMARY_ENERGY
+from ghim.calibration import Calibrator, CalibrationConfig, make_calibrator
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +112,7 @@ def _transport_carrier_demands(total_ej: float) -> dict[str, float]:
 
 def _fixup_base_demand(
     sector,
-    calibrator: AR6Calibrator | Calibrator,
+    calibrator: Calibrator,
     carrier_prices: dict[str, float],
     sector_ar6: str,
     region_name: str,
@@ -336,8 +330,7 @@ def build_region(
     base_gdp: float,
     base_pop: float,
     gdp_share: float = 1.0,
-    calibrator: AR6Calibrator | Calibrator | None = None,
-    gdp_share_r5: float | None = None,
+    calibrator: Calibrator | None = None,
 ) -> tuple[Region, RegionState]:
     """Build one Region with all OOP sectors + initial RegionState.
 
@@ -346,33 +339,24 @@ def build_region(
     gdp_share : float
         This R32 region's GDP share within its R10 group.
         Used to downscale R10 energy calibration data.
-    calibrator : AR6Calibrator | Calibrator, optional
+    calibrator : Calibrator, optional
         If provided, uses base-year sector totals and carrier shares.
-    gdp_share_r5 : float, optional
-        GDP share within R5 group (for AR6 sector total downscaling).
-        Not needed when calibrator has native_r32=True.
     """
     fuel_prices = _default_fuel_prices()
     carrier_prices = _default_carrier_prices()
 
-    r10 = R32_TO_R10.get(region_name, region_name)
 
-    # Downscale R10 final demand to R32
-    fd_r10 = DEFAULT_FINAL_DEMAND.get(
-        r10, {"industry": 5.0, "buildings": 5.0, "transport": 5.0}
-    )
-    fd = {k: v * gdp_share for k, v in fd_r10.items()}
-
-    # Override with calibrator base-year sector totals if available
-    if calibrator is not None and calibrator.available:
-        is_native_r32 = getattr(calibrator, 'native_r32', False)
-        for sector_name in ["industry", "buildings", "transport"]:
+    # Sector FE totals from calibrator; fallback to GCAM-v8.2 SSP2-Ref
+    fd: dict[str, float] = {}
+    for sector_name in ["industry", "buildings", "transport"]:
+        cal_total = None
+        if calibrator is not None and calibrator.available:
             cal_total = calibrator.get_sector_total(BASE_YEAR, sector_name, region_name)
-            if cal_total is not None and cal_total > 0:
-                if is_native_r32:
-                    fd[sector_name] = cal_total
-                elif gdp_share_r5 is not None and gdp_share_r5 > 0:
-                    fd[sector_name] = cal_total * gdp_share_r5
+        if cal_total is None or cal_total <= 0:
+            from ghim.data.gcam_cal import load_gcam_calibration as _load_default
+            _def = _load_default()
+            cal_total = _def.sector_totals.get(region_name, {}).get(BASE_YEAR, {}).get(sector_name, 1.0)
+        fd[sector_name] = max(cal_total, 0.01)
 
     total_final = max(sum(fd.values()), 0.1)
 
@@ -469,10 +453,9 @@ def build_region(
     elec.calibrate(elec_shares, fuel_prices, total_generation_ej=max(elec_total, 0.1))
 
     hydrogen = OOPHydrogenSector()
-    is_native_r32 = getattr(calibrator, 'native_r32', False) if calibrator else False
     h2_target = (
         calibrator.get_h2_production(BASE_YEAR, region_name)
-        if is_native_r32 and hasattr(calibrator, 'get_h2_production')
+        if hasattr(calibrator, 'get_h2_production')
         else None
     )
     hydrogen.calibrate(
@@ -484,7 +467,7 @@ def build_region(
     district_heat = DistrictHeatingSector()
     heat_target = (
         calibrator.get_heat_production(BASE_YEAR, region_name)
-        if is_native_r32 and hasattr(calibrator, 'get_heat_production')
+        if hasattr(calibrator, 'get_heat_production')
         else None
     )
     district_heat.calibrate(
@@ -681,7 +664,6 @@ def build_oop_model(
     ssp_data: dict[str, Any],
     scenario: str = "SSP2",
     policy: Any = None,
-    calibrator_type: str = "ar6",
 ) -> tuple[GHIMModel, PeriodState, DampedSolver]:
     """Build GHIMModel with OOP sectors for all R32 regions.
 
@@ -689,7 +671,6 @@ def build_oop_model(
 
     Parameters
     ----------
-    calibrator_type : str
         "ar6" (default) or "gcam".  Determines calibration data source.
 
     Returns (model, initial_state, solver).
@@ -707,40 +688,19 @@ def build_oop_model(
         return float(df.loc[region, available[-1]]) if available else fallback
 
     # Calibrator
-    calibrator: AR6Calibrator | Calibrator
-    if calibrator_type == "gcam":
-        from ghim.data.gcam_cal import load_gcam_calibration
-        dataset = load_gcam_calibration(scenario=f"{scenario}-Ref")
-        calibrator = Calibrator(dataset)
-    else:
-        calibrator = AR6Calibrator(ssp=scenario)
+    # Calibrator: GCAM dataset (default: GCAM-v8.2 SSP2-Ref)
+    from ghim.data.gcam_cal import load_gcam_calibration
+    dataset = load_gcam_calibration(scenario=f"{scenario}-Ref")
+    calibrator = Calibrator(dataset)
 
-    # GDP source: GCAM GDP (MER, 2010$) when GCAM calibrator, else SSP (PPP, 2005$)
-    use_gcam_gdp = calibrator_type == "gcam" and calibrator.available
-    if use_gcam_gdp:
-        gdp_by_r32 = {
-            name: calibrator.get_gdp(BASE_YEAR, name) or 100.0
-            for name in R32_REGIONS
-        }
-        logger.info("Using GCAM GDP (MER, billion US$2010)")
-    else:
-        gdp_by_r32 = {
-            name: _ssp_at_base(gdp_df, name, 100.0)
-            for name in R32_REGIONS
-        }
+    # GDP from calibrator (MER, billion US$2010)
+    gdp_by_r32 = {
+        name: calibrator.get_gdp(BASE_YEAR, name) or 100.0
+        for name in R32_REGIONS
+    }
 
-    # Compute GDP shares for R10→R32 downscaling
+    # Compute GDP shares for R10→R32 downscaling (trade module)
     gdp_shares = _compute_gdp_shares_within_r10(gdp_by_r32)
-
-    # Compute GDP shares within R5 groups (for AR6 sector total downscaling)
-    gdp_shares_r5: dict[str, float] = {}
-    for r5_name, r32_list in R5_TO_R32.items():
-        group_gdp = sum(gdp_by_r32.get(r, 0.0) for r in r32_list)
-        for r32 in r32_list:
-            if group_gdp > 0:
-                gdp_shares_r5[r32] = gdp_by_r32.get(r32, 0.0) / group_gdp
-            else:
-                gdp_shares_r5[r32] = 1.0 / len(r32_list)
 
     regions: dict[str, Region] = {}
     initial_state = PeriodState(period=BASE_YEAR, regions={})
@@ -749,11 +709,10 @@ def build_oop_model(
         base_gdp = gdp_by_r32[region_name]
         base_pop = _ssp_at_base(pop_df, region_name, 10.0)
         share = gdp_shares.get(region_name, 0.1)
-        share_r5 = gdp_shares_r5.get(region_name)
 
         region, rs = build_region(
             region_name, base_gdp, base_pop, gdp_share=share,
-            calibrator=calibrator, gdp_share_r5=share_r5,
+            calibrator=calibrator,
         )
 
         # Initialize TFP trajectory — use GCAM GDP if available
@@ -814,8 +773,7 @@ def build_oop_model(
 
     # Calibrator logging
     if calibrator.available:
-        n_years = (len(calibrator._ar6_years) if isinstance(calibrator, AR6Calibrator)
-                   else len(calibrator.dataset.years))
+        n_years = len(calibrator.dataset.years)
         logger.info("Calibrator '%s' loaded (%d years)", calibrator.model_name, n_years)
     else:
         logger.warning("Calibrator unavailable — using default preferences")
@@ -832,7 +790,6 @@ def build_oop_model(
     )
     model.bunkers = bunkers
     model.calibrator = calibrator  # type: ignore[attr-defined]
-    model.gdp_shares_r5 = gdp_shares_r5  # type: ignore[attr-defined]
 
     # Exogenous GDP trajectory per region
     # GCAM: MER billion US$2010 | AR6: PPP billion US$2005
@@ -984,14 +941,13 @@ def _apply_calibration(
 
     Called BEFORE solver.solve() at each model period. Updates preference
     factors on sectors/subsectors so the logit reproduces target shares.
-    Works with both AR6Calibrator (R5, needs downscaling) and Calibrator
-    (native R32, no downscaling).
+    Recalibrate sectors from calibration target data.
+    
     """
-    calibrator: AR6Calibrator | Calibrator | None = getattr(model, "calibrator", None)
+    calibrator: Calibrator | None = getattr(model, "calibrator", None)
     if calibrator is None or not calibrator.available:
         return
 
-    is_native_r32 = getattr(calibrator, 'native_r32', False)
 
     for region_name, region in model.regions.items():
         rs = state.regions[region_name]
@@ -1023,21 +979,21 @@ def _apply_calibration(
                         sector._target_tech_shares /= sector._target_tech_shares.sum()
 
                 # Generation scaling: GCAM gen includes T&D losses + own-use
-                if is_native_r32 and hasattr(calibrator, 'get_elec_generation'):
+                if hasattr(calibrator, 'get_elec_generation'):
                     target_gen = calibrator.get_elec_generation(period, region_name)
                     if target_gen is not None and target_gen > 0:
                         sector._generation_target = target_gen
 
             # --- Hydrogen sector ---
             if isinstance(sector, OOPHydrogenSector):
-                if is_native_r32 and hasattr(calibrator, 'get_h2_production'):
+                if hasattr(calibrator, 'get_h2_production'):
                     target = calibrator.get_h2_production(period, region_name)
                     if target is not None and target > 0:
                         sector._generation_target = target
 
             # --- District heat sector ---
             if isinstance(sector, DistrictHeatingSector):
-                if is_native_r32 and hasattr(calibrator, 'get_heat_production'):
+                if hasattr(calibrator, 'get_heat_production'):
                     target = calibrator.get_heat_production(period, region_name)
                     if target is not None and target > 0:
                         sector._generation_target = target
@@ -1054,7 +1010,6 @@ def _apply_calibration(
             # For buildings with subsector data: use per-subsector shares
             has_subsector = (
                 sector_ar6 == "buildings"
-                and is_native_r32
                 and hasattr(calibrator, 'get_subsector_carrier_shares')
             )
 
@@ -1183,15 +1138,8 @@ def _apply_calibration(
                 period, sector_ar6, region_name,
             )
 
-            if is_native_r32:
-                if cal_total is not None and cal_total > 0:
-                    target_fe = cal_total
-            else:
-                gdp_shares_r5 = getattr(model, "gdp_shares_r5", None)
-                if gdp_shares_r5 is not None:
-                    share_r5 = gdp_shares_r5.get(region_name, 0.0)
-                    if cal_total is not None and cal_total > 0 and share_r5 > 0:
-                        target_fe = cal_total * share_r5
+            if cal_total is not None and cal_total > 0:
+                target_fe = cal_total
 
             if target_fe is not None and target_fe > 0:
                 orig_gdp = rs.gdp
@@ -1234,7 +1182,6 @@ def oop_run_model(
     ssp_data: dict[str, Any],
     scenario: str = "SSP2",
     policy: Any = None,
-    calibrator_type: str = "ar6",
 ) -> list[PeriodState]:
     """Run the OOP model for all R32 regions, all periods.
 
@@ -1242,7 +1189,7 @@ def oop_run_model(
     Returns a list of PeriodState (one per period).
     """
     model, state, solver = build_oop_model(ssp_data, scenario, policy,
-                                            calibrator_type=calibrator_type)
+                                            )
 
     pop_df = ssp_data["population"]
     gdp_df = ssp_data["gdp"]

@@ -44,7 +44,7 @@ def run_validation(
 ) -> None:
     from ghim.data.ssp import load_ssp_data_r32
     from ghim.build import build_oop_model, oop_run_model, _apply_calibration
-    from ghim.calibration import Calibrator, AR6Calibrator
+    from ghim.calibration import Calibrator
     from ghim.core.config import BASE_YEAR, FUTURE_YEARS
     from ghim.sectors.electricity import OOPElectricitySector
 

@@ -1,52 +1,41 @@
 """Calibration pipeline — preference weight computation from target data.
 
-Supports multiple calibration data sources (AR6, GCAM, user-provided).
-Each source is loaded into a standardized ``CalibrationDataset`` (R32
-resolution, common units) and wrapped in a ``Calibrator`` that provides
-target shares and inverse-logit preference factors.
+A ``CalibrationDataset`` (R32 resolution, common units) is wrapped in a
+``Calibrator`` that provides target shares and inverse-logit preference
+factors.  Default dataset: GCAM-v8.2 SSP2-Ref (1975-2100).
 
-The calibrated model is identified by a ``model_name`` string such as
-``GHIM-GCAM-v8.2-SSP2-Ref`` — the calibration source is part of the
-model identity, enabling multi-source comparison.
-
-Legacy ``AR6Calibrator`` is retained for backward compatibility; new code
-should prefer the general ``Calibrator`` class backed by a dataset.
+``CalibrationConfig`` controls:
+- calibrate: bool (True = run calibration, False = load saved params)
+- model_name / scenario: identify the calibration source
+- cal_start / cal_end: calibration year range (auto-detected from dataset)
+- run_end: model run endpoint (default = cal_end, can extend to 2150+)
 
 Usage
 -----
-    # General pipeline (GCAM, user data, etc.)
-    from ghim.data.gcam_cal import load_gcam_calibration
-    dataset = load_gcam_calibration()
-    calibrator = Calibrator(dataset)
+    from ghim.calibration import CalibrationConfig, make_calibrator
 
-    # Legacy AR6 pipeline
-    calibrator = AR6Calibrator("SSP2")
+    # Default: GCAM-v8.2 SSP2-Ref, 1975-2100
+    config = CalibrationConfig()
+    calibrator, time_cfg = make_calibrator(config)
 
-    # Both expose the same interface:
-    prefs = calibrator.electricity_prefs(year, techs, fuel_prices, region_r32="USA")
-    prefs = calibrator.demand_carrier_prefs(year, sub, prices, "industry", region_r32="USA")
+    # Custom dataset
+    config = CalibrationConfig(
+        model_name="MyModel", scenario="Baseline",
+        dataset_path="path/to/data/",
+    )
+
+    # No calibration (load saved params)
+    config = CalibrationConfig(calibrate=False, params_file="params.json")
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from ghim.data.ar6_cal import (
-    get_ar6_elec_shares,
-    get_ar6_fe_carrier_shares,
-    get_ar6_sector_carrier_shares,
-    get_ar6_sector_totals,
-    get_ar6_total_final_energy,
-    get_ar6_gdp,
-    get_ar6_population,
-    get_ar6_years,
-    R32_TO_R5,
-    AR6_R5_REGIONS,
-)
 from ghim.energy.logit import preference_calibrate
 from ghim.config import ELEC_LOGIT_EXP, PREF_LOGIT_SCALE
 
@@ -213,421 +202,106 @@ def _expand_carrier_shares_to_techs(
 
 
 # ---------------------------------------------------------------------------
-# AR6Calibrator
+# CalibrationConfig — user-facing configuration
 # ---------------------------------------------------------------------------
 
-class AR6Calibrator:
-    """Compute per-period preference weights to match AR6 SSP scenarios.
-
-    Handles both electricity supply-side (LCOE logit) and demand-side
-    (carrier preference logit) calibration.
+@dataclass
+class CalibrationConfig:
+    """Configuration for the calibration pipeline.
 
     Parameters
     ----------
-    ssp : str
-        SSP scenario (e.g., "SSP2").
-    scale_k : float
-        Logit sensitivity parameter.
-    logit_exp : float
-        Relative cost exponent (electricity sector).
+    calibrate : bool
+        True = run calibration against dataset. False = load saved params.
+    model_name : str or None
+        Name of the reference model (e.g. "GCAM-v8.2"). Required when
+        providing a custom dataset.
+    scenario : str or None
+        Scenario name (e.g. "SSP2-Ref"). Required when providing a
+        custom dataset.
+    cal_start : int or None
+        First calibration year. Auto-detected from dataset if None.
+    cal_end : int or None
+        Last calibration year. Auto-detected from dataset if None.
+    run_end : int or None
+        Last model year. Default = cal_end. Set to 2150 for projection.
+    dataset_path : str or None
+        Path to custom calibration data directory. If None, uses
+        built-in GCAM-v8.2 SSP2-Ref.
+    params_file : str or None
+        Path to saved calibrated params (for calibrate=False).
     """
+    calibrate: bool = True
+    model_name: str | None = None
+    scenario: str | None = None
+    cal_start: int | None = None
+    cal_end: int | None = None
+    run_end: int | None = None
+    dataset_path: str | None = None
+    params_file: str | None = None
 
-    native_r32: bool = False
 
-    def __init__(
-        self,
-        ssp: str = "SSP2",
-        scale_k: float = PREF_LOGIT_SCALE,
-        logit_exp: float = ELEC_LOGIT_EXP,
-    ) -> None:
-        self.ssp = ssp
-        self.scale_k = scale_k
-        self.logit_exp = logit_exp
+def make_calibrator(
+    config: CalibrationConfig | None = None,
+) -> tuple["Calibrator", dict[str, int]]:
+    """Create a Calibrator from configuration.
 
-        # Cache AR6 data by R5 region and year
-        self._elec_cache: dict[str, dict[int, dict[str, float]]] = {}
-        self._fe_cache: dict[str, dict[int, dict[str, float]]] = {}
-        self._sector_carrier_cache: dict[str, dict[str, dict[int, dict[str, float]]]] = {}
-        self._sector_total_cache: dict[str, dict[int, dict[str, float]]] = {}
-        self._gdp_cache: dict[str, dict[int, float]] = {}
-        self._pop_cache: dict[str, dict[int, float]] = {}
-        self._fe_total_cache: dict[str, dict[int, float]] = {}
-        self._ar6_years: list[int] = []
+    Returns
+    -------
+    calibrator : Calibrator
+    time_info : dict with keys cal_start, cal_end, run_end
+    """
+    if config is None:
+        config = CalibrationConfig()
 
-        self._load_ar6_data()
+    if not config.calibrate:
+        # Load saved params (Phase C — placeholder)
+        if config.params_file is None:
+            raise ValueError("calibrate=False requires params_file")
+        raise NotImplementedError("Saved params loading not yet implemented")
 
-    def _load_ar6_data(self) -> None:
-        """Pre-load AR6 shares, sector totals, GDP, population."""
-        try:
-            self._ar6_years = get_ar6_years(self.ssp)
-        except FileNotFoundError:
-            self._ar6_years = []
-            return
-
-        sectors = ["industry", "buildings", "transport"]
-
-        for region in AR6_R5_REGIONS + ["World"]:
-            self._elec_cache[region] = {}
-            self._fe_cache[region] = {}
-            self._sector_total_cache[region] = {}
-            self._gdp_cache[region] = {}
-            self._pop_cache[region] = {}
-            self._fe_total_cache[region] = {}
-
-            for year in self._ar6_years:
-                elec = get_ar6_elec_shares(self.ssp, year, region)
-                if elec:
-                    self._elec_cache[region][year] = elec
-                fe = get_ar6_fe_carrier_shares(self.ssp, year, region)
-                if fe:
-                    self._fe_cache[region][year] = fe
-
-                st = get_ar6_sector_totals(self.ssp, year, region)
-                if st:
-                    self._sector_total_cache[region][year] = st
-
-                gdp = get_ar6_gdp(self.ssp, year, region)
-                if gdp > 0:
-                    self._gdp_cache[region][year] = gdp
-
-                pop = get_ar6_population(self.ssp, year, region)
-                if pop > 0:
-                    self._pop_cache[region][year] = pop
-
-                fe_total = get_ar6_total_final_energy(self.ssp, year, region)
-                if fe_total > 0:
-                    self._fe_total_cache[region][year] = fe_total
-
-            # Sector-specific carrier shares
-            for sector in sectors:
-                self._sector_carrier_cache.setdefault(sector, {})[region] = {}
-                for year in self._ar6_years:
-                    sc = get_ar6_sector_carrier_shares(self.ssp, year, sector, region)
-                    if sc:
-                        self._sector_carrier_cache[sector][region][year] = sc
-
-    @property
-    def available(self) -> bool:
-        """Whether AR6 data was loaded successfully."""
-        return len(self._ar6_years) > 0
-
-    @property
-    def model_name(self) -> str:
-        return f"GHIM-AR6-{self.ssp}"
-
-    # ---- R32 → R5 lookup helper ----
-
-    def _resolve_r5(self, region_r32: str) -> str:
-        r5 = R32_TO_R5.get(region_r32)
-        return r5 if r5 is not None else "World"
-
-    def _get_cached(
-        self,
-        cache: dict[str, dict[int, Any]],
-        region_r32: str,
-    ) -> dict[int, Any]:
-        """Look up R5 cache, falling back to World."""
-        r5 = self._resolve_r5(region_r32)
-        data = cache.get(r5, {})
-        if not data:
-            data = cache.get("World", {})
-        return data
-
-    # ---- Electricity targets ----
-
-    def get_elec_target_shares(
-        self,
-        year: int,
-        region_r32: str,
-    ) -> dict[str, float] | None:
-        """Get AR6 electricity generation target shares for a model year."""
-        if not self.available:
-            return None
-        year_data = self._get_cached(self._elec_cache, region_r32)
-        if not year_data:
-            return None
-        return _interpolate_shares(year_data, year)
-
-    def get_fe_target_shares(
-        self,
-        year: int,
-        region_r32: str,
-    ) -> dict[str, float] | None:
-        """Get AR6 final energy carrier target shares for a model year."""
-        if not self.available:
-            return None
-        year_data = self._get_cached(self._fe_cache, region_r32)
-        if not year_data:
-            return None
-        return _interpolate_shares(year_data, year)
-
-    # ---- Demand sector targets ----
-
-    def get_sector_total(
-        self,
-        year: int,
-        sector: str,
-        region_r32: str,
-    ) -> float | None:
-        """Get AR6 sector total final energy (EJ/yr) for a model year.
-
-        sector: "industry", "buildings", or "transport".
-        """
-        if not self.available:
-            return None
-        year_data = self._get_cached(self._sector_total_cache, region_r32)
-        if not year_data:
-            return None
-        # Extract this sector's values across years, interpolate as scalar
-        sector_by_year = {
-            y: d.get(sector, 0.0)
-            for y, d in year_data.items()
-            if sector in d
-        }
-        return _interpolate_scalar(sector_by_year, year)
-
-    def get_fe_total(
-        self,
-        year: int,
-        region_r32: str,
-    ) -> float | None:
-        """Get AR6 total final energy (EJ/yr) for a model year."""
-        if not self.available:
-            return None
-        year_data = self._get_cached(self._fe_total_cache, region_r32)
-        return _interpolate_scalar(year_data, year)
-
-    def get_gdp(
-        self,
-        year: int,
-        region_r32: str,
-    ) -> float | None:
-        """Get AR6 GDP|PPP (billion US$2005/yr) for a model year."""
-        if not self.available:
-            return None
-        year_data = self._get_cached(self._gdp_cache, region_r32)
-        return _interpolate_scalar(year_data, year)
-
-    def get_population(
-        self,
-        year: int,
-        region_r32: str,
-    ) -> float | None:
-        """Get AR6 Population (million) for a model year."""
-        if not self.available:
-            return None
-        year_data = self._get_cached(self._pop_cache, region_r32)
-        return _interpolate_scalar(year_data, year)
-
-    def get_sector_carrier_shares(
-        self,
-        year: int,
-        sector: str,
-        region_r32: str,
-    ) -> dict[str, float] | None:
-        """Get AR6 carrier shares within a demand sector for a model year.
-
-        For transport: sector-specific carrier data from AR6.
-        For industry/buildings: aggregate FE carrier shares (best proxy).
-        """
-        if not self.available:
-            return None
-        sector_cache = self._sector_carrier_cache.get(sector, {})
-        r5 = self._resolve_r5(region_r32)
-        year_data = sector_cache.get(r5, {})
-        if not year_data:
-            year_data = sector_cache.get("World", {})
-        if not year_data:
-            return None
-        return _interpolate_shares(year_data, year)
-
-    # ---- Electricity preference calibration ----
-
-    def electricity_prefs(
-        self,
-        year: int,
-        techs: list[Any],
-        fuel_prices: dict[str, float],
-        region_r32: str = "USA",
-        carbon_price: float = 0.0,
-    ) -> np.ndarray | None:
-        """Compute preference factors for electricity techs at a given period.
-
-        Parameters
-        ----------
-        year : int
-            Model year.
-        techs : list[SupplyTech]
-            Electricity technology objects (must have .lcoe() and .name).
-        fuel_prices : dict
-            Raw fuel prices $/GJ.
-        region_r32 : str
-            R32 region name.
-        carbon_price : float
-            Current carbon price $/tCO2.
-
-        Returns
-        -------
-        ndarray or None
-            Preference factors for each tech (same order as techs).
-            None if AR6 data unavailable.
-        """
-        target = self.get_elec_target_shares(year, region_r32)
-        if target is None:
-            return None
-
-        # Build shares array in tech order
-        shares = np.array([
-            target.get(t.name, 1e-6) for t in techs
-        ])
-        shares = np.maximum(shares, 1e-6)
-        shares /= shares.sum()
-
-        # Compute LCOE at current prices
-        costs = np.array([
-            t.lcoe(fuel_prices, carbon_price=carbon_price) for t in techs
-        ])
-
-        # Inverse logit → preference factors
-        prefs = preference_calibrate(
-            shares, costs, self.scale_k, logit_exp=self.logit_exp,
+    # Load dataset
+    if config.dataset_path is not None:
+        # Custom dataset — require model_name and scenario
+        if config.model_name is None or config.scenario is None:
+            raise ValueError(
+                "When providing a custom dataset, both model_name and "
+                "scenario must be specified."
+            )
+        # TODO: generic dataset loader for user-provided data
+        raise NotImplementedError(
+            f"Custom dataset loading from {config.dataset_path} "
+            "not yet implemented. Use built-in GCAM-v8.2 SSP2-Ref."
         )
-        return prefs
+    else:
+        # Default: GCAM-v8.2 SSP2-Ref
+        from ghim.data.gcam_cal import load_gcam_calibration
+        source = config.model_name or "GCAM-v8.2"
+        scenario = config.scenario or "SSP2-Ref"
+        dataset = load_gcam_calibration(source=source, scenario=scenario)
 
-    # ---- Demand carrier preference calibration ----
+    calibrator = Calibrator(dataset)
 
-    def demand_carrier_prefs(
-        self,
-        year: int,
-        subsector: Any,
-        carrier_prices: dict[str, float],
-        sector_name: str,
-        region_r32: str = "USA",
-    ) -> np.ndarray | None:
-        """Compute preference factors for a demand-sector subsector.
+    # Auto-detect time range from dataset
+    all_years = set()
+    for region_years in dataset.gdp.values():
+        all_years |= set(region_years.keys())
+    sorted_years = sorted(all_years)
 
-        Looks up AR6 carrier shares for the sector, expands to per-tech
-        target shares (handling multi-tech carriers via cost competition),
-        and back-calculates preference factors via inverse logit.
+    cal_start = config.cal_start or (sorted_years[0] if sorted_years else 1975)
+    cal_end = config.cal_end or (sorted_years[-1] if sorted_years else 2100)
+    run_end = config.run_end or cal_end
 
-        Parameters
-        ----------
-        year : int
-            Model year.
-        subsector : Subsector
-            The subsector (has .techs, .logit_scale).
-        carrier_prices : dict
-            Consumer carrier prices $/GJ.
-        sector_name : str
-            "industry", "buildings", or "transport".
-        region_r32 : str
-            R32 region name.
+    time_info = {
+        "cal_start": cal_start,
+        "cal_end": cal_end,
+        "run_end": run_end,
+    }
 
-        Returns
-        -------
-        ndarray or None
-            Preference factors for each tech, or None if data unavailable.
-        """
-        target = self.get_sector_carrier_shares(year, sector_name, region_r32)
-        if target is None:
-            return None
-
-        # Skip single-tech subsectors (e.g., buildings cooling = electricity only)
-        if len(subsector.techs) <= 1:
-            return None
-
-        # Compute costs the same way the subsector does
-        from ghim.core.technology import Powertrain
-        costs = np.array([
-            t.lcot(carrier_prices.get(t.carrier, 5.0))
-            if isinstance(t, Powertrain)
-            else t.levelized_cost(carrier_prices.get(t.carrier, 5.0))
-            for t in subsector.techs
-        ])
-
-        # Expand carrier-level targets to per-tech shares
-        tech_shares = _expand_carrier_shares_to_techs(
-            target, subsector.techs, costs, subsector.logit_scale,
-        )
-
-        # Inverse logit → preference factors
-        prefs = preference_calibrate(
-            tech_shares, costs, subsector.logit_scale,
-        )
-        return prefs
-
-    # ---- Convenience methods ----
-
-    def all_period_elec_prefs(
-        self,
-        techs: list[Any],
-        fuel_prices: dict[str, float],
-        region_r32: str = "USA",
-        years: list[int] | None = None,
-    ) -> dict[int, np.ndarray]:
-        """Pre-compute electricity prefs for all model periods.
-
-        Returns dict mapping year → preference array.
-        Useful for diagnostics and pre-computation.
-        """
-        if years is None:
-            from ghim.core.config import MODEL_YEARS
-            years = MODEL_YEARS
-
-        result: dict[int, np.ndarray] = {}
-        for year in years:
-            prefs = self.electricity_prefs(year, techs, fuel_prices, region_r32)
-            if prefs is not None:
-                result[year] = prefs
-        return result
-
-    def summary(
-        self,
-        region_r32: str = "USA",
-        years: list[int] | None = None,
-    ) -> str:
-        """Print AR6 target shares summary for debugging."""
-        if years is None:
-            years = sorted(self._ar6_years)[:6]  # first 6 years
-
-        lines = [f"AR6 {self.ssp} targets for {region_r32} (R5={R32_TO_R5.get(region_r32, '?')})"]
-        lines.append("")
-
-        lines.append("Electricity generation shares:")
-        for year in years:
-            shares = self.get_elec_target_shares(year, region_r32)
-            if shares is None:
-                lines.append(f"  {year}: no data")
-                continue
-            top5 = sorted(shares.items(), key=lambda x: -x[1])[:5]
-            parts = [f"{k}={v:.3f}" for k, v in top5]
-            lines.append(f"  {year}: {', '.join(parts)}")
-
-        lines.append("")
-        lines.append("Final energy carrier shares:")
-        for year in years:
-            shares = self.get_fe_target_shares(year, region_r32)
-            if shares is None:
-                lines.append(f"  {year}: no data")
-                continue
-            top5 = sorted(shares.items(), key=lambda x: -x[1])[:5]
-            parts = [f"{k}={v:.3f}" for k, v in top5]
-            lines.append(f"  {year}: {', '.join(parts)}")
-
-        lines.append("")
-        lines.append("Sector totals (EJ/yr):")
-        for year in years:
-            parts = []
-            for s in ["industry", "buildings", "transport"]:
-                val = self.get_sector_total(year, s, region_r32)
-                parts.append(f"{s}={val:.1f}" if val is not None else f"{s}=?")
-            lines.append(f"  {year}: {', '.join(parts)}")
-
-        return "\n".join(lines)
+    return calibrator, time_info
 
 
-# ---------------------------------------------------------------------------
-# Calibrator — general-purpose, backed by CalibrationDataset
+# AR6Calibrator removed — use Calibrator + CalibrationConfig
 # ---------------------------------------------------------------------------
 
 class Calibrator:

@@ -140,9 +140,20 @@ Full calibration pipeline restructuring for H2, district heat, demand carrier sh
 
 ### Learnings
 - 상수 income elasticity는 비선형 성장 (Gompertz) 재현 불가
+- Non-parametric demand curves (GDP/cap → demand/cap lookup) 가 satiation 잘 잡음
+- sector_pref_weight가 buildings subsector에 전달 안 되던 버그 수정 → Bld +27%→-4%
 - Anderson이 느린 이유: deepcopy overhead in template management
 - T&D loss로 _generation_target 대체 → 더 clean한 architecture
 - DECAY mode에서 FE 진동 → HOLD이 더 안정적
+
+### CRITICAL BUG (미해결): Post-cal industry electricity share 급감
+- Industry elec share: 27.7% (2100) → 14.9% (2150) — HOLD mode에서도
+- _target_svc_shares가 유지되는데 share가 바뀜 → inline recal이 작동 안 하는 것으로 추정
+- 가능한 원인:
+  1. _target_svc_shares가 post-cal에서 어딘가에서 리셋됨
+  2. carrier prices가 급변해서 inline recal의 preference_calibrate가 수치적 불안정
+  3. industry의 _last_demand_ej (inter-period carry-forward)가 income elasticity를 바꿔서 sector total이 변동 → FE 절대량 변화
+- 디버깅 필요: post-cal에서 industry EU subsector의 pref_factors/shares를 매 period 출력
 
 ## Next Steps When Resuming
 

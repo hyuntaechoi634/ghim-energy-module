@@ -192,8 +192,8 @@ class BuildingsSector(DemandSector):
         if self.base_gdp <= 0:
             return 0.0
 
-        # Price response
-        sub_price = sub.price_index(rs.carrier_prices)
+        # Price response (includes sector_pref_weight as shared cost adjustment)
+        sub_price = sub.price_index(rs.carrier_prices) + self.sector_pref_weight
         sub_base_price = self._sub_base_prices.get(sub.name, self.base_price)
         price_ratio = max(sub_price / sub_base_price, 0.01) if sub_base_price > 0 else 1.0
         price_factor = price_ratio ** self.price_elasticity

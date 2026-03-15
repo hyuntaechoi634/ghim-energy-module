@@ -1264,7 +1264,8 @@ def oop_run_model(
 
         # Recalibration loop: preferences calibrated at pre-solver prices
         # may drift after convergence. Re-calibrate and re-solve.
-        _FE_RECAL_ROUNDS = 2
+        # First few periods need more rounds (price transient from base year).
+        _FE_RECAL_ROUNDS = 3 if period <= 2030 else 2
         for _fe_round in range(_FE_RECAL_ROUNDS):
             # Emissions cap: bisection wrapper if policy has a cap for this period
             if (policy is not None

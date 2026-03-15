@@ -216,6 +216,24 @@ class GHIMModel:
                 rs.final_demand = {c: v * scale for c, v in raw_demands.items()}
 
             # Step 4: Transformation sectors -> generation, prices
+            # 4pre. Re-calibrate electricity pref factors at current prices
+            for sector in region.transformation:
+                tgt_shares = getattr(sector, '_target_tech_shares', None)
+                if tgt_shares is not None and hasattr(sector, 'techs'):
+                    carbon_price_val = getattr(rs, 'carbon_price', 0.0)
+                    lcoe = np.array([
+                        t.lcoe(rs.raw_fuel_prices, carbon_price=carbon_price_val)
+                        for t in sector.techs
+                    ])
+                    lcoe = np.maximum(lcoe, 0.01)
+                    prefs = preference_calibrate(
+                        tgt_shares, lcoe,
+                        getattr(sector, 'scale_k', 0.3),
+                        logit_exp=getattr(sector, 'logit_exp', -4.0),
+                    )
+                    sector.base_pref_factors = prefs
+                    sector.pref_factors = prefs
+
             # Sectors read carbon_price from rs, subsidies from policy
             for sector in region.transformation:
                 demand = rs.final_demand.get(sector.carrier_output, 0.0)

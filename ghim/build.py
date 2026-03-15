@@ -998,6 +998,19 @@ def _apply_calibration(
                     sector.base_pref_factors = prefs
                     sector.pref_factors = prefs
                     sector.calibration_year = period
+                    # Cache target shares for inline recalibration in F()
+                    target_shares = calibrator.get_elec_target_shares(
+                        period, region_name,
+                    )
+                    if target_shares is not None:
+                        sector._target_tech_shares = np.array([
+                            target_shares.get(t.name, 1e-6)
+                            for t in sector.techs
+                        ])
+                        sector._target_tech_shares = np.maximum(
+                            sector._target_tech_shares, 1e-6,
+                        )
+                        sector._target_tech_shares /= sector._target_tech_shares.sum()
 
                 # Generation scaling: GCAM gen includes T&D losses + own-use
                 if is_native_r32 and hasattr(calibrator, 'get_elec_generation'):

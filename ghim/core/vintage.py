@@ -76,6 +76,13 @@ class VintageTracker:
     steepness: float = VintageConfig().scurve_steepness
     timestep: int = TIMESTEP
 
+    # Profit shutdown parameters (GCAM A23.globaltech_retirement)
+    # median_shutdown_point: profit_ratio at 50% shutdown (default -0.1)
+    # profit_shutdown_steepness: logistic curve steepness (default 6)
+    profit_shutdown_params: dict[str, tuple[float, float]] = field(
+        default_factory=dict,
+    )
+
     # Internal state
     _capacity: dict[str, dict[int, float]] = field(
         default_factory=dict, repr=False,
@@ -164,6 +171,33 @@ class VintageTracker:
         """Sum of all surviving capacity across all techs."""
         return sum(self.surviving_capacity(current_year).values())
 
+    # -- Profit shutdown ---------------------------------------------------
+
+    def profit_shutdown_factor(
+        self, tech: str, profit_ratio: float,
+    ) -> float:
+        """Fraction of capacity surviving after profit-based shutdown.
+
+        GCAM-style logistic:
+          shutdown_rate = (1+m)^n / ((1+m)^n + (1+π)^n)
+          survival = 1 - shutdown_rate
+
+        where π = profit_ratio = (market_price - var_cost) / var_cost,
+        m = median_shutdown_point, n = steepness.
+
+        Returns 1.0 (no shutdown) if tech has no profit shutdown params.
+        """
+        params = self.profit_shutdown_params.get(tech)
+        if params is None:
+            return 1.0
+        median, steep = params
+        # Clamp profit_ratio to avoid overflow
+        pr = max(min(profit_ratio, 10.0), -0.99)
+        num = (1.0 + median) ** steep
+        den = num + (1.0 + pr) ** steep
+        shutdown_rate = num / den if den > 0 else 0.0
+        return max(1.0 - shutdown_rate, 0.0)
+
     # -- Investment & retirement -----------------------------------------
 
     def retire_and_invest(
@@ -171,8 +205,15 @@ class VintageTracker:
         year: int,
         target_shares: np.ndarray,
         total_demand_ej: float,
+        tech_var_costs: np.ndarray | None = None,
+        market_price: float = 0.0,
     ) -> np.ndarray:
         """Compute effective shares after retirement + new investment.
+
+        When tech_var_costs and market_price are provided, applies
+        profit-based shutdown AFTER S-curve retirement.  Plants with
+        high effective cost (incl. unobservable cost / pref_weight)
+        relative to market_price are retired early.
 
         Returns ndarray of effective shares (sums to 1).
         Also stores detailed InvestmentResult in self.last_result.
@@ -191,6 +232,20 @@ class VintageTracker:
                 gap_ej=0.0,
             )
             return target_shares
+
+        # Apply profit-based shutdown to surviving capacity
+        if (tech_var_costs is not None
+                and market_price > 0
+                and self.profit_shutdown_params):
+            for i, tech in enumerate(self.tech_names):
+                vc = tech_var_costs[i]
+                if vc > 0:
+                    profit_ratio = (market_price - vc) / vc
+                else:
+                    profit_ratio = 10.0  # zero cost → always profitable
+                factor = self.profit_shutdown_factor(tech, profit_ratio)
+                surviving[tech] *= factor
+            total_surviving = sum(surviving.values())
 
         gap = total_demand_ej - total_surviving
 
@@ -372,11 +427,14 @@ class PipelineAwareVintageTracker(VintageTracker):
         year: int,
         target_shares: np.ndarray,
         total_demand_ej: float,
+        tech_var_costs: np.ndarray | None = None,
+        market_price: float = 0.0,
     ) -> np.ndarray:
         """Override: handle construction completion and slow-build routing.
 
         1. Complete construction arriving this year.
         2. Compute surviving capacity.
+        2b. Profit-based shutdown (if cost/price provided).
         3. Gap = demand − surviving − under_construction.
         4. Route new investment: slow-build → pipeline, fast → capacity.
         """
@@ -397,6 +455,20 @@ class PipelineAwareVintageTracker(VintageTracker):
                 gap_ej=0.0,
             )
             return target_shares
+
+        # Profit-based shutdown
+        if (tech_var_costs is not None
+                and market_price > 0
+                and self.profit_shutdown_params):
+            for i, tech in enumerate(self.tech_names):
+                vc = tech_var_costs[i]
+                if vc > 0:
+                    profit_ratio = (market_price - vc) / vc
+                else:
+                    profit_ratio = 10.0
+                factor = self.profit_shutdown_factor(tech, profit_ratio)
+                surviving[tech] *= factor
+            total_surviving = sum(surviving.values())
 
         if total_surviving > total_demand_ej:
             # Overcapacity

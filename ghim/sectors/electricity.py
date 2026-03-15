@@ -246,11 +246,33 @@ class OOPElectricitySector(TransformationSector):
         lifetimes = {n: _ELEC_LIFETIMES.get(n, 40.0) for n in names}
         hard_cutoff = _HARD_CUTOFF & set(names)
 
+        # Profit shutdown params from GCAM A23 (median_shutdown_point, steepness)
+        _PROFIT_SHUTDOWN = {
+            "coal": (-0.1, 6.0),
+            "coal_ccs": (-0.1, 6.0),
+            "gas_cc": (-0.1, 6.0),
+            "gas_cc_ccs": (-0.1, 6.0),
+            "oil": (-0.5, 6.0),
+            "biomass": (-0.1, 6.0),
+            "biomass_ccs": (-0.1, 6.0),
+            "nuclear": (-0.1, 6.0),
+            "geothermal": (-0.1, 6.0),
+            "solar": (-0.1, 6.0),
+            "solar_csp": (-0.1, 6.0),
+            "wind": (-0.1, 6.0),
+            "wind_offshore": (-0.1, 6.0),
+            "hydro": (-0.1, 6.0),
+            "h2_turbine": (-0.1, 6.0),
+            "ammonia": (-0.1, 6.0),
+        }
+        ps_params = {n: _PROFIT_SHUTDOWN[n] for n in names if n in _PROFIT_SHUTDOWN}
+
         self.vintage = PipelineAwareVintageTracker(
             tech_names=names,
             lifetimes=lifetimes,
             hard_cutoff_techs=hard_cutoff,
             construction_times=dict(CONSTRUCTION_TIMES),
+            profit_shutdown_params=ps_params,
         )
 
         if gem_vintage_data:
@@ -306,10 +328,26 @@ class OOPElectricitySector(TransformationSector):
             lcoe, pf, self.scale_k, self.logit_exp,
         )
 
-        # Vintage stock turnover
+        # Variable cost per tech (for profit shutdown):
+        # fuel/eff + VOM + pref_weight (unobservable cost)
+        var_costs = np.array([
+            (rs.raw_fuel_prices.get(t.fuel_input, 0.0) / t.efficiency
+             if t.efficiency > 0 else 0.0)
+            + t.vom
+            + (pf[i] if pf is not None else 0.0)  # unobservable cost
+            for i, t in enumerate(self.techs)
+        ])
+        var_costs = np.maximum(var_costs, 0.0)
+
+        # Market price = share-weighted LCOE (current period)
+        mkt_price = float(np.dot(target_shares, lcoe))
+
+        # Vintage stock turnover (with profit shutdown)
         if self.vintage is not None:
             effective_shares = self.vintage.retire_and_invest(
                 year, target_shares, demand_ej,
+                tech_var_costs=var_costs,
+                market_price=mkt_price,
             )
         else:
             effective_shares = target_shares

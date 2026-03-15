@@ -259,8 +259,22 @@ class VintageTracker:
                 surviving.get(t, 0.0) * scale for t in self.tech_names
             ])
         else:
-            # Gap: fill with new investment following target shares
-            new_investment_arr = target_shares * gap
+            # Gap: back-calculate new investment so that
+            # (surviving + new) / total ≈ target_shares.
+            # target_shares are EFFECTIVE targets (GCAM output),
+            # not raw new-investment allocations.
+            surv_arr = np.array([surviving.get(t, 0.0) for t in self.tech_names])
+            desired = target_shares * total_demand_ej
+            needed = desired - surv_arr
+            needed = np.maximum(needed, 0.0)  # can't disinvest
+            needed_sum = needed.sum()
+            if needed_sum > 0:
+                # Scale to fill the gap exactly
+                new_investment_arr = needed * (gap / needed_sum)
+            else:
+                # All techs over-represented; fall back to target shares
+                new_investment_arr = target_shares * gap
+
             for i, tech in enumerate(self.tech_names):
                 if new_investment_arr[i] > 0:
                     self._capacity[tech][year] = (
@@ -268,9 +282,7 @@ class VintageTracker:
                         + new_investment_arr[i]
                     )
                     new_inv[tech] = new_investment_arr[i]
-            effective = np.array([
-                surviving.get(t, 0.0) for t in self.tech_names
-            ]) + new_investment_arr
+            effective = surv_arr + new_investment_arr
 
         # Normalize to shares
         total = effective.sum()
@@ -503,7 +515,17 @@ class PipelineAwareVintageTracker(VintageTracker):
             )
             gap = max(total_demand_ej - total_surviving - total_uc, 0.0)
 
-            new_investment_arr = target_shares * gap
+            # Back-calculate new investment for effective target matching
+            surv_arr = np.array([surviving.get(t, 0.0) for t in self.tech_names])
+            desired = target_shares * total_demand_ej
+            needed = desired - surv_arr
+            needed = np.maximum(needed, 0.0)
+            needed_sum = needed.sum()
+            if needed_sum > 0:
+                new_investment_arr = needed * (gap / needed_sum)
+            else:
+                new_investment_arr = target_shares * gap
+
             for i, tech in enumerate(self.tech_names):
                 if new_investment_arr[i] <= 0:
                     continue

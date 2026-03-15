@@ -451,11 +451,21 @@ def build_region(
     demand_sectors = [industry, buildings, transport, agriculture]
 
     # --- Transformation sectors ---
-    # Electricity: use R10 shares (tech mix), downscale total generation
+    # Electricity: base year shares and generation from calibrator
     elec = OOPElectricitySector(region=region_name)
-    elec_shares = DEFAULT_ELEC_SHARES.get(r10, {})
-    elec_total_r10 = DEFAULT_ELEC_TOTAL_EJ.get(r10, 5.0)
-    elec_total = elec_total_r10 * gdp_share
+    elec_shares = None
+    elec_total = None
+    if calibrator is not None and calibrator.available:
+        if hasattr(calibrator, 'get_elec_target_shares'):
+            elec_shares = calibrator.get_elec_target_shares(BASE_YEAR, region_name)
+        if hasattr(calibrator, 'get_elec_generation'):
+            elec_total = calibrator.get_elec_generation(BASE_YEAR, region_name)
+    if not elec_shares or not elec_total or elec_total <= 0:
+        # Fallback: load GCAM-v8.2 SSP2-Ref as default
+        from ghim.data.gcam_cal import load_gcam_calibration as _load_default_cal
+        _default = _load_default_cal()
+        elec_shares = _default.elec_shares.get(region_name, {}).get(BASE_YEAR, {})
+        elec_total = _default.elec_generation.get(region_name, {}).get(BASE_YEAR, 1.0)
     elec.calibrate(elec_shares, fuel_prices, total_generation_ej=max(elec_total, 0.1))
 
     hydrogen = OOPHydrogenSector()

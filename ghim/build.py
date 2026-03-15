@@ -1027,6 +1027,15 @@ def _apply_calibration(
             if sector_ar6 is None:
                 continue
 
+            # Set industry _last_demand_ej from GCAM target (stable reference
+            # for income elasticity curve, avoids solver feedback oscillation)
+            if isinstance(sector, IndustrySector):
+                ind_target = calibrator.get_sector_total(
+                    period, sector_ar6, region_name,
+                )
+                if ind_target is not None and ind_target > 0:
+                    sector._last_demand_ej = ind_target
+
             # --- Carrier share recalibration ---
             # For buildings with subsector data: use per-subsector shares
             has_subsector = (

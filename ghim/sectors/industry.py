@@ -92,6 +92,7 @@ class IndustrySector(DemandSector):
         self.base_demand = 0.0
         self.base_gdp = 0.0
         self.base_price = 5.0
+        self._last_demand_ej: float = 0.0  # FE from previous period
 
     @property
     def eu(self) -> Subsector:
@@ -105,23 +106,22 @@ class IndustrySector(DemandSector):
         """Industry income elasticity from per-capita energy output.
 
         A32.inc_elas_output.csv uses GJ/cap/yr as the x-axis (not GDP/cap).
-        This avoids the region-dependent GJ→$ conversion problem.
-
-        Uses previous-period demand (self.base_demand) scaled by GDP growth
-        as an approximation of current per-capita output.
+        Uses actual FE demand from previous solver iteration / period,
+        not GDP-approximated demand (which overestimates energy/cap for
+        fast-growing developing countries and causes premature satiation).
         """
         pop = getattr(rs, "population", 0.0) or self.base_population
         if pop <= 0 or self.base_demand <= 0:
             return self.income_elasticity
 
-        # Approximate per-capita industrial energy: scale base by GDP ratio
-        if self.base_gdp > 0:
-            gdp_ratio = rs.gdp / self.base_gdp
-        else:
-            gdp_ratio = 1.0
-        approx_demand_ej = self.base_demand * gdp_ratio
-        # EJ / million people × 1e9 GJ/EJ / 1e6 people = × 1e3 GJ/cap
-        energy_per_cap_gj = approx_demand_ej * 1e3 / pop
+        # Use actual demand from previous iteration; fall back to base
+        demand_ej = (
+            self._last_demand_ej
+            if self._last_demand_ej > 0
+            else self.base_demand
+        )
+        # EJ / million people × 1e3 = GJ/cap
+        energy_per_cap_gj = demand_ej * 1e3 / pop
         return _interpolate_curve(_IND_INCOME_ELAS_CURVE, energy_per_cap_gj)
 
     def compute_demand(
@@ -141,7 +141,7 @@ class IndustrySector(DemandSector):
         fs_demand = self.fs.carrier_demands(fs_shares, total * self.fs_fraction)
 
         result: dict[str, float] = {}
-        for d in [eu_demand, fs_demand]:
+        for d in (eu_demand, fs_demand):
             for carrier, ej in d.items():
                 result[carrier] = result.get(carrier, 0.0) + ej
         return result

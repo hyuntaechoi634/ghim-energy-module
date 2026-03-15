@@ -591,14 +591,16 @@ def _calibration_pass(
         except Exception:
             pass
 
-    for period in FUTURE_YEARS:
+    _cal_end_pass = getattr(cal_model, '_time_cfg', {}).get('cal_end', 2100)
+    _cal_years = [y for y in FUTURE_YEARS if y <= _cal_end_pass]
+
+    for period in _cal_years:
         state.period = period
         for name, rs in state.regions.items():
             if period in pop_df.columns:
                 rs.population = float(pop_df.loc[name, period])
             cal_model.regions[name].economy.set_tfp_for_year(period)
 
-        # AR6 preference recalibration
         _apply_calibration(cal_model, state, period)
 
         # Warm-up first period
@@ -808,6 +810,7 @@ def build_oop_model(
 
     # Exogenous GDP trajectory per region
     # GCAM: MER billion US$2010 | AR6: PPP billion US$2005
+    _cal_end = (time_cfg or {}).get("cal_end", 2100)
     exogenous_gdp: dict[str, dict[int, float]] = {}
     gdp_target_series: dict[str, dict[int, float]] = {}
     ssp_pop_series: dict[str, dict[int, float]] = {}
@@ -816,14 +819,16 @@ def build_oop_model(
         gdp_target_series[region_name] = {}
         ssp_pop_series[region_name] = {}
         for year in MODEL_YEARS:
-            if calibrator.available:
-                g = calibrator.get_gdp(year, region_name)
-                if g is not None and g > 0:
-                    exogenous_gdp[region_name][year] = g
-                    gdp_target_series[region_name][year] = g
-            elif year in gdp_df.columns:
-                exogenous_gdp[region_name][year] = float(gdp_df.loc[region_name, year])
-                gdp_target_series[region_name][year] = float(gdp_df.loc[region_name, year])
+            # GDP target: only up to cal_end (post-cal TFP extrapolates)
+            if year <= _cal_end:
+                if calibrator.available:
+                    g = calibrator.get_gdp(year, region_name)
+                    if g is not None and g > 0:
+                        exogenous_gdp[region_name][year] = g
+                        gdp_target_series[region_name][year] = g
+                elif year in gdp_df.columns:
+                    exogenous_gdp[region_name][year] = float(gdp_df.loc[region_name, year])
+                    gdp_target_series[region_name][year] = float(gdp_df.loc[region_name, year])
             if year in pop_df.columns:
                 ssp_pop_series[region_name][year] = float(pop_df.loc[region_name, year])
     model.exogenous_gdp = exogenous_gdp
@@ -873,6 +878,22 @@ def build_oop_model(
     if want_endogenous:
         model.exogenous_gdp = None
         logger.info("Endogenous GDP enabled — CES determines GDP")
+
+    # Extrapolate TFP for post-cal periods from last calibration trend
+    _run_end = (time_cfg or {}).get("run_end", FUTURE_YEARS[-1])
+    post_cal_years = [y for y in FUTURE_YEARS if _cal_end < y <= _run_end]
+    if post_cal_years:
+        for region_name, region in model.regions.items():
+            traj = region.economy._tfp_trajectory
+            cal_years_in_traj = sorted(y for y in traj if y <= _cal_end)
+            if len(cal_years_in_traj) >= 2:
+                # Growth rate from last two calibration periods
+                y1, y2 = cal_years_in_traj[-2], cal_years_in_traj[-1]
+                tfp1, tfp2 = traj[y1], traj[y2]
+                growth_rate = (tfp2 / tfp1) ** (1.0 / (y2 - y1)) if tfp1 > 0 else 1.0
+                for y in post_cal_years:
+                    dt = y - y2
+                    traj[y] = tfp2 * growth_rate ** dt
 
     # Solver options: "damped" (default, faster) or "anderson" (more robust)
     solver_type = (time_cfg or {}).get("solver", "damped")

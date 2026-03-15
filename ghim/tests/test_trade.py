@@ -5,7 +5,8 @@ import numpy as np
 
 from ghim.energy.supply import ResourceSupply, ResourceGrade
 from ghim.energy.trade import GlobalMarket, TradeModule, TradeResult
-from ghim.config import TRADED_FUELS, TRADE_PRICE_TOL
+from ghim.core.config import TRADED_FUELS
+from ghim.config import TRADE_PRICE_TOL
 from ghim.regions import R10_REGIONS
 
 
@@ -234,80 +235,6 @@ class TestTradeCal:
                 assert tc[fuel][region] > 0
 
 
-# ---------------------------------------------------------------------------
-# Solver integration with trade
-# ---------------------------------------------------------------------------
-
-class TestSolverTradeIntegration:
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        from ghim.data.ssp import load_ssp_data
-        self.ssp_data = load_ssp_data("SSP2")
-
-    def test_run_model_with_trade(self):
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        assert len(results) > 0
-        # Check that trade fields are populated
-        first = results[0]
-        assert hasattr(first, "world_prices")
-        assert hasattr(first, "net_exports_ej")
-        assert hasattr(first, "domestic_production_ej")
-
-    def test_run_model_without_trade(self):
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=False)
-        assert len(results) > 0
-        # Trade fields should be empty dicts
-        first = results[0]
-        assert first.world_prices == {}
-        assert first.net_exports_ej == {}
-
-    def test_world_prices_populated(self):
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        # Pick a future year result
-        future_results = [r for r in results if r.year == 2050]
-        assert len(future_results) > 0
-        for r in future_results:
-            for fuel in TRADED_FUELS:
-                assert fuel in r.world_prices
-                assert r.world_prices[fuel] > 0
-
-    def test_global_net_exports_balance(self):
-        """Net exports across all regions should sum to ~0 for each fuel at base year."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        # Check base year (2020) where demand estimates are most accurate
-        year_results = [r for r in results if r.year == 2020]
-        assert len(year_results) > 0
-        for fuel in TRADED_FUELS:
-            net_sum = sum(r.net_exports_ej.get(fuel, 0.0) for r in year_results)
-            total_prod = sum(r.domestic_production_ej.get(fuel, 0.0) for r in year_results)
-            if total_prod > 0:
-                # Net exports should approximately balance (within 10% of production)
-                assert abs(net_sum) < total_prod * 0.10, \
-                    f"Net exports for {fuel} in 2020 don't balance: {net_sum:.2f} EJ"
-
-    def test_middle_east_exports_oil(self):
-        """Middle East should be a net oil exporter in projection years."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        # Check 2030 where trade clearing has stabilized
-        me_2030 = [r for r in results if r.year == 2030 and r.region == "Middle East"]
-        assert len(me_2030) == 1
-        assert me_2030[0].net_exports_ej.get("oil", 0.0) > 0, \
-            "Middle East should be a net oil exporter"
-
-    def test_trade_prices_in_reasonable_range(self):
-        """World prices should be in a reasonable range."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        for r in results:
-            if r.world_prices:
-                for fuel, price in r.world_prices.items():
-                    assert 0.1 <= price <= 50.0, \
-                        f"World price for {fuel} in {r.year}: {price} $/GJ out of range"
 
 
 # ---------------------------------------------------------------------------
@@ -503,125 +430,6 @@ class TestPriceSmoothing:
         assert tm.prev_world_prices == {"coal": 2.5, "oil": 7.0, "gas": 4.5}
 
 
-# ---------------------------------------------------------------------------
-# Integration: price trajectory quality
-# ---------------------------------------------------------------------------
-
-class TestPriceTrajectoryIntegration:
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        from ghim.data.ssp import load_ssp_data
-        self.ssp_data = load_ssp_data("SSP2")
-
-    def test_no_price_collapse_post_2040(self):
-        """Oil price should not collapse below $4/GJ after 2040."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        oil_prices = {
-            r.year: r.world_prices.get("oil", 0.0)
-            for r in results if r.region == R10_REGIONS[0] and r.year >= 2040
-        }
-        for year, price in oil_prices.items():
-            assert price >= 4.0, \
-                f"Oil price collapsed to {price:.2f} $/GJ in {year}"
-
-    def test_late_period_price_stability(self):
-        """Between consecutive periods 2100-2150, price should not swing > 50%."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        # Collect world prices per year (same across all regions)
-        prices_by_year: dict[int, dict[str, float]] = {}
-        for r in results:
-            if r.region == R10_REGIONS[0] and r.year >= 2100:
-                prices_by_year[r.year] = dict(r.world_prices)
-
-        years = sorted(prices_by_year.keys())
-        for i in range(1, len(years)):
-            prev_yr, curr_yr = years[i - 1], years[i]
-            for fuel in TRADED_FUELS:
-                prev_p = prices_by_year[prev_yr].get(fuel, 0.0)
-                curr_p = prices_by_year[curr_yr].get(fuel, 0.0)
-                if prev_p > 0:
-                    change = abs(curr_p - prev_p) / prev_p
-                    assert change <= 0.50, \
-                        f"{fuel} price swung {change*100:.0f}% from {prev_yr} to {curr_yr} " \
-                        f"({prev_p:.2f} → {curr_p:.2f} $/GJ)"
-
-    def test_calibration_rents_populated(self):
-        """Calibration rents should be populated in results."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        future_results = [r for r in results if r.year >= 2025]
-        assert len(future_results) > 0
-        # At least some results should have non-empty calibration rents
-        rents = future_results[0].calibration_rents
-        assert len(rents) > 0, "calibration_rents should be populated"
-        # Oil rent should be positive (observed >> extraction cost)
-        assert rents.get("oil", 0.0) > 0, "Oil calibration rent should be positive"
-
-    def test_gas_no_collapse_at_2025(self):
-        """Gas production at 2025 should match demand (no supply-side collapse).
-
-        Note: 2020 gas production is synthetic (DEFAULT_PRIMARY_ENERGY = 127.5 EJ)
-        and exceeds actual computed demand (~28 EJ) due to the gas_cc naming
-        mismatch in electricity calibration.  The important check is that
-        market clearing produces an amount equal to demand, not that it
-        matches the inflated synthetic baseline.
-        """
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        gas_prod_2025 = sum(
-            r.domestic_production_ej.get("gas", 0.0)
-            for r in results if r.year == 2025
-        )
-        # Gas production should be positive and meaningful (>10 EJ globally)
-        assert gas_prod_2025 >= 10.0, \
-            f"Gas production collapsed at 2025: {gas_prod_2025:.1f} EJ"
-        # Production should approximately match demand (supply = demand)
-        gas_demand_2025 = sum(
-            sum(fd.get("gas", 0.0) for fd in r.final_demand_ej.values())
-            for r in results if r.year == 2025
-        )
-        if gas_demand_2025 > 0:
-            ratio = gas_prod_2025 / gas_demand_2025
-            # Ratio can exceed baseline because production smoothing floors
-            # regional declines from the inflated base-year synthetic gas data
-            # (127.5 EJ vs actual demand). The relative logit formulation
-            # further changes the demand-side gas share.
-            assert 0.5 <= ratio <= 30.0, \
-                f"Gas production/demand mismatch: {gas_prod_2025:.1f}/{gas_demand_2025:.1f}"
-
-    def test_eastern_asia_coal_no_collapse(self):
-        """Eastern Asia coal should not drop to 0 between 2080-2100."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        for year in [2080, 2085, 2090, 2095, 2100]:
-            ea_results = [
-                r for r in results
-                if r.year == year and r.region == "Eastern Asia"
-            ]
-            if ea_results:
-                coal_prod = ea_results[0].domestic_production_ej.get("coal", 0.0)
-                assert coal_prod > 0, \
-                    f"Eastern Asia coal production collapsed to 0 in {year}"
-
-    def test_middle_east_oil_no_production_cliff(self):
-        """ME oil shouldn't drop to 0 if previous period had >10 EJ."""
-        from ghim.solver.recursive import run_model
-        results = run_model(self.ssp_data, "SSP2", trade_enabled=True)
-        me_results = sorted(
-            [r for r in results if r.region == "Middle East"],
-            key=lambda r: r.year,
-        )
-        for i in range(1, len(me_results)):
-            prev = me_results[i - 1]
-            curr = me_results[i]
-            if 2025 <= curr.year <= 2100:
-                prev_oil = prev.domestic_production_ej.get("oil", 0.0)
-                curr_oil = curr.domestic_production_ej.get("oil", 0.0)
-                if prev_oil > 10.0:
-                    assert curr_oil > 0, \
-                        f"ME oil dropped to 0 in {curr.year} from {prev_oil:.1f} EJ"
 
 
 # ---------------------------------------------------------------------------

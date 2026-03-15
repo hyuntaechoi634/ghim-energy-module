@@ -42,8 +42,18 @@ def _int_keys(d: dict) -> dict[int, float]:
 
 @dataclass
 class CarbonPricePolicy:
-    """Carbon price trajectory (year -> $/tCO2)."""
+    """Carbon price trajectory (year -> $/tCO2).
+
+    Coverage toggles control which emission sources are priced.
+    Phase 1 default: CO₂ only.  Phase 2: all non-CO₂ enabled.
+    """
     trajectory: dict[int, float] = field(default_factory=dict)
+
+    # Non-CO₂ coverage toggles (§16.4 of design/implementation.md)
+    cover_co2: bool = True              # fossil CO₂ from combustion + process
+    cover_fugitive_ch4: bool = False    # fugitive CH₄ from fossil production
+    cover_agriculture_ghg: bool = False # agriculture CH₄/N₂O (sector price adder)
+    cover_fgases: bool = False          # F-gas pricing (placeholder, Phase 2)
 
     def get_price(self, year: int) -> float:
         return _interpolate(self.trajectory, year)
@@ -190,6 +200,10 @@ def load_policy(path: str | Path) -> PolicyScenario:
         cp = raw["carbon_price"]
         ps.carbon_price = CarbonPricePolicy(
             trajectory=_int_keys(cp.get("trajectory", {})),
+            cover_co2=cp.get("cover_co2", True),
+            cover_fugitive_ch4=cp.get("cover_fugitive_ch4", False),
+            cover_agriculture_ghg=cp.get("cover_agriculture_ghg", False),
+            cover_fgases=cp.get("cover_fgases", False),
         )
 
     # Renewable subsidies

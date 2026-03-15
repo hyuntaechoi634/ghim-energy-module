@@ -10,7 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ghim.config import GHIM_DATA_EXT, MODEL_YEARS, DEFAULT_SSP, BASE_YEAR, END_YEAR, TIMESTEP
+from ghim.core.config import MODEL_YEARS, BASE_YEAR, END_YEAR, TIMESTEP
+from ghim.config import GHIM_DATA_EXT, DEFAULT_SSP
 from ghim.regions import R10_REGIONS, build_iso_to_r10
 
 
@@ -167,6 +168,80 @@ def load_ssp_data(scenario: str = DEFAULT_SSP) -> dict[str, pd.DataFrame]:
         merged = _extrapolate_beyond(merged, last_data_year=2100)
 
         # Reorder columns to MODEL_YEARS
+        final_cols = [y for y in MODEL_YEARS if y in merged.columns]
+        result[label] = merged[final_cols]
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# R32 aggregation
+# ---------------------------------------------------------------------------
+
+def _aggregate_to_r32(
+    df: pd.DataFrame,
+    var_name: str,
+    year_cols: list[str],
+    country_to_r32: dict[str, str],
+) -> pd.DataFrame:
+    """Aggregate country-level data to R32 for a single variable."""
+    from ghim.regions_r32 import R32_REGIONS
+
+    sub = df[df["Variable"] == var_name].copy()
+    sub["r32"] = sub["Region"].map(country_to_r32)
+    sub = sub.dropna(subset=["r32"])
+    available = [c for c in year_cols if c in sub.columns]
+    for c in available:
+        sub[c] = pd.to_numeric(sub[c], errors="coerce")
+    agg = sub.groupby("r32")[available].sum()
+    agg = agg.reindex(R32_REGIONS, fill_value=0.0)
+    agg.columns = [int(c) for c in agg.columns]
+    return agg
+
+
+def load_ssp_data_r32(scenario: str = DEFAULT_SSP) -> dict[str, pd.DataFrame]:
+    """Load SSP population and GDP aggregated to GCAM R32 regions.
+
+    Same logic as load_ssp_data() but uses ISO → R32 mapping.
+
+    Returns
+    -------
+    dict with keys ``"population"`` and ``"gdp"``, each a DataFrame
+    with index=R32_REGIONS (32 rows), columns=model years (int).
+    """
+    from ghim.regions_r32 import R32_REGIONS, build_ssp_country_to_r32
+
+    raw = _load_ssp_raw()
+    country_to_r32 = build_ssp_country_to_r32()
+
+    df_ssp = raw[raw["Scenario"] == scenario]
+    if df_ssp.empty:
+        valid = sorted(raw["Scenario"].unique())
+        raise ValueError(
+            f"SSP scenario '{scenario}' not found in database. "
+            f"Valid scenarios: {valid}"
+        )
+
+    df_hist = raw[raw["Scenario"] == "Historical Reference"]
+    all_year_cols = [str(y) for y in MODEL_YEARS]
+
+    result = {}
+    for var_name, label in [("Population", "population"), ("GDP|PPP", "gdp")]:
+        agg_ssp = _aggregate_to_r32(df_ssp, var_name, all_year_cols, country_to_r32)
+        agg_hist = _aggregate_to_r32(df_hist, var_name, all_year_cols, country_to_r32)
+
+        merged = pd.DataFrame(index=R32_REGIONS)
+        for y in MODEL_YEARS:
+            if y < BASE_YEAR and y in agg_hist.columns:
+                merged[y] = agg_hist[y]
+            elif y in agg_ssp.columns:
+                merged[y] = agg_ssp[y]
+            elif y in agg_hist.columns:
+                merged[y] = agg_hist[y]
+            else:
+                merged[y] = 0.0
+
+        merged = _extrapolate_beyond(merged, last_data_year=2100)
         final_cols = [y for y in MODEL_YEARS if y in merged.columns]
         result[label] = merged[final_cols]
 

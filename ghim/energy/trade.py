@@ -9,13 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ghim.config import (
-    TRADED_FUELS,
-    TRADE_PRICE_TOL,
-    TRADE_MAX_ITER,
-    TRADE_PRICE_FLOOR,
-    TRADE_PRICE_CEILING,
-)
+from ghim.core.config import TRADED_FUELS, TRADE_MAX_ITER
+from ghim.config import TRADE_PRICE_TOL, TRADE_PRICE_FLOOR, TRADE_PRICE_CEILING
 from ghim.energy.supply import ResourceSupply
 from ghim.regions import R10_REGIONS
 

@@ -1,4 +1,15 @@
-"""Model configuration: time horizon, constants, and settings."""
+"""Non-config constants: paths, unit conversions, per-tech data, logit parameters.
+
+Structural model parameters have moved to ``ghim.core.config`` (frozen
+dataclass hierarchy).  Carbon-related constants are in ``ghim.core.carrier``.
+
+This file retains:
+  - GHIM_DATA_EXT (deployment path)
+  - Unit conversions (physical constants, never overridden)
+  - capital_recovery_factor() (utility function)
+  - Per-technology data dicts (logit, lifetimes, learning rates, etc.)
+  - Calibration data (observed prices, deflators)
+"""
 
 from __future__ import annotations
 
@@ -7,48 +18,35 @@ from pathlib import Path
 import numpy as np
 
 # ---------------------------------------------------------------------------
+# Re-export from ghim.core for backward compatibility
+# (safety net -- prefer direct imports from ghim.core.config / ghim.core.carrier)
+# ---------------------------------------------------------------------------
+from ghim.core.config import (  # noqa: F401
+    HISTORY_START, BASE_YEAR, END_YEAR, TIMESTEP,
+    HISTORICAL_YEARS, FUTURE_YEARS, MODEL_YEARS, SOLVE_YEARS, NUM_PERIODS,
+    SIGMA_KL, SIGMA_KLE, SAVINGS_RATE, DEPRECIATION_RATE, CAPITAL_SHARE,
+    PRICE_TOL, MAX_PRICE_ITER, PRICE_DAMP,
+    PROFIT_SHUTDOWN_STEEPNESS, PROFIT_SHUTDOWN_MEDIAN,
+    SCURVE_STEEPNESS, SCURVE_HALFLIFE_RATIO, HARD_CUTOFF_TECHS,
+    TRADED_FUELS, TRADE_MAX_ITER, TRADE_MAX_PRICE_CHANGE, TRADE_MAX_PROD_DECLINE,
+    TRADE_DEMAND_MAX_ITER, TRADE_DEMAND_DAMP,
+    COST_FLOOR_FRACTION,
+)
+from ghim.core.carrier import CARBON_COEFS, TC_TO_TCO2  # noqa: F401
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 GHIM_DATA_EXT = Path(__file__).resolve().parent / "data" / "external"
 
 # ---------------------------------------------------------------------------
-# Time horizon
-# ---------------------------------------------------------------------------
-HISTORY_START: int = 2000
-BASE_YEAR: int = 2020
-END_YEAR: int = 2150
-TIMESTEP: int = 5  # years
-HISTORICAL_YEARS: list[int] = list(range(HISTORY_START, BASE_YEAR + 1, TIMESTEP))
-FUTURE_YEARS: list[int] = list(range(BASE_YEAR + TIMESTEP, END_YEAR + 1, TIMESTEP))
-MODEL_YEARS: list[int] = HISTORICAL_YEARS + FUTURE_YEARS
-SOLVE_YEARS: list[int] = [BASE_YEAR] + FUTURE_YEARS  # solver runs from base year onward
-NUM_PERIODS: int = len(MODEL_YEARS)
-
-# ---------------------------------------------------------------------------
-# Economic parameters
+# Economic parameters (not in config hierarchy -- per-tech / calibration data)
 # ---------------------------------------------------------------------------
 DISCOUNT_RATE: float = 0.05
-DEPRECIATION_RATE: float = 0.05  # annual capital depreciation
-LABOR_FORCE_PARTICIPATION: float = 0.65  # fraction of population as labor
-
-# DICE-style endogenous GDP
-CAPITAL_SHARE: float = 0.3          # alpha in K^alpha * L^(1-alpha)
-SAVINGS_RATE: float = 0.22          # fraction of net output saved
-INVESTMENT_CAP_RATE: float = 0.10   # max annual investment as fraction of K
-CAPITAL_OUTPUT_RATIO: float = 3.0   # K/Y ratio for base-year capital calibration
-
-# ---------------------------------------------------------------------------
-# CES elasticities (KLEM nesting, WITCH-inspired defaults)
-# ---------------------------------------------------------------------------
-SIGMA_VA: float = 0.5    # Value Added: Capital vs Labor
-SIGMA_EM: float = 0.5    # Energy-Materials composite (deprecated, kept for compat)
-SIGMA_E: float = 1.0     # Electric vs Non-electric energy
-SIGMA_NE: float = 2.0    # Among non-electric fuels (coal, oil, gas, biomass)
-
-# CES-KLE: two-level nested CES production function
-# Y = TFP × CES(VA, E; σ_KLE)  where VA = K^α × L^(1-α)
-SIGMA_KLE: float = 0.4   # VA-Energy substitution (GCAM/WITCH range 0.3-0.5)
-MIN_ENERGY_COST_SHARE: float = 0.05  # floor to prevent degenerate calibration
+LABOR_FORCE_PARTICIPATION: float = 0.65  # global fallback
+INVESTMENT_CAP_RATE: float = 0.10        # max annual investment as fraction of K
+CAPITAL_OUTPUT_RATIO: float = 3.0        # K/Y ratio for base-year calibration
+MIN_ENERGY_COST_SHARE: float = 0.05      # floor for CES calibration
 
 # Regional labor force participation rates (ILO 2020 estimates)
 REGIONAL_LFP: dict[str, float] = {
@@ -65,31 +63,29 @@ REGIONAL_LFP: dict[str, float] = {
 }
 
 # ---------------------------------------------------------------------------
+# CES elasticities (deprecated -- kept for compatibility only)
+# New code uses EconomyConfig.sigma_kl, sigma_kle, sigma_el_nel, sigma_klem
+# ---------------------------------------------------------------------------
+SIGMA_VA: float = 0.5
+SIGMA_EM: float = 0.5
+SIGMA_E: float = 1.0
+SIGMA_NE: float = 2.0
+
+# ---------------------------------------------------------------------------
 # Logit parameters
 # ---------------------------------------------------------------------------
-DEFAULT_LOGIT_EXP: float = -3.0  # technology choice elasticity
-ELEC_LOGIT_EXP: float = -4.0     # electricity sector
+DEFAULT_LOGIT_EXP: float = -3.0
+ELEC_LOGIT_EXP: float = -4.0
 REFINING_LOGIT_EXP: float = -6.0
 HYDROGEN_LOGIT_EXP: float = -3.0
-DEMAND_LOGIT_EXP: float = -3.0   # fuel switching in final demand
+DEMAND_LOGIT_EXP: float = -3.0
 
-# ---------------------------------------------------------------------------
-# Preference factor parameters (MERGE-style logit)
-# Share_i = exp(-k * (Cost_i + Pref_i)) / sum(exp(-k * (Cost_j + Pref_j)))
-# ---------------------------------------------------------------------------
-PREF_LOGIT_SCALE: float = 0.3       # k: sensitivity to cost ($/GJ)^-1
-PREF_DECAY_RATE: float = 0.02       # annual decay rate for preference factors
-# (1-0.02)^5 = 0.904 → ~10% decay per 5-year period; halve in ~35 years
+# Preference factor logit (MERGE-style)
+PREF_LOGIT_SCALE: float = 0.3
+PREF_DECAY_RATE: float = 0.02
+LOGIT_EXP_PREF: float = -4.0
 
-# ---------------------------------------------------------------------------
-# Relative preference logit (new default mode)
-# s_i = α_i · exp(-k·P_i) · C_i^β / Σ_j α_j · exp(-k·P_j) · C_j^β
-# ---------------------------------------------------------------------------
-LOGIT_EXP_PREF: float = -4.0        # β for relative_pref_logit
-
-# Per-technology annual decay rates for preference factors.
-# Renewables/new tech decay faster (toward pure cost competition).
-# Conventional fuels decay = 0 (no built-in preference drift).
+# Per-technology annual decay rates for preference factors
 PREF_DECAY_RATES: dict[str, float] = {
     "solar": 0.03, "wind": 0.03,
     "hydrogen": 0.03, "electrolysis": 0.03,
@@ -103,17 +99,18 @@ PREF_DECAY_RATES: dict[str, float] = {
 # Stock turnover times (years)
 # ---------------------------------------------------------------------------
 TURNOVER_TIMES: dict[str, float] = {
-    "electricity": 40.0,    # Power plants
-    "hydrogen": 25.0,       # H2 plants
-    "transport": 15.0,      # Vehicle fleet
-    "industry": 30.0,       # Boilers/furnaces
-    "buildings": 50.0,      # Heating systems
-    "refining": 40.0,       # Refineries
-    "data_centers": 7.0,    # Server hardware lifecycle
+    "electricity": 40.0,
+    "hydrogen": 25.0,
+    "transport": 15.0,
+    "industry": 30.0,
+    "buildings": 50.0,
+    "refining": 40.0,
+    "data_centers": 7.0,
 }
 
 # ---------------------------------------------------------------------------
-# Vintage stock retirement (GCAM-inspired S-curve)
+# Vintage stock retirement -- per-tech data
+# (Structural params moved to VintageConfig in ghim.core.config)
 # ---------------------------------------------------------------------------
 TECH_RETIREMENT_LIFETIMES: dict[str, float] = {
     # Electricity
@@ -122,68 +119,39 @@ TECH_RETIREMENT_LIFETIMES: dict[str, float] = {
     # Hydrogen
     "smr": 30.0, "electrolysis": 25.0,
 }
-SCURVE_STEEPNESS: float = 0.1           # k: S-curve shape parameter
-SCURVE_HALFLIFE_RATIO: float = 0.75     # rho: more conservative than GCAM's 0.5
-HARD_CUTOFF_TECHS: frozenset[str] = frozenset({"wind", "solar", "electrolysis"})
 
-# Demand-sector carrier lifetimes (= equipment lifetime, not sector turnover)
+# Demand-sector carrier lifetimes
 CARRIER_RETIREMENT_LIFETIMES: dict[str, float] = {
-    "transport": 20.0,      # vehicle fleet (all fuel types)
-    "buildings": 30.0,      # heating systems (furnace/heat pump/boiler)
-    "industry_heavy": 40.0, # industrial boilers/furnaces
-    "industry_light": 25.0, # lighter equipment
-    "data_centers": 10.0,   # server hardware lifecycle
+    "transport": 20.0,
+    "buildings": 30.0,
+    "industry_heavy": 40.0,
+    "industry_light": 25.0,
+    "data_centers": 10.0,
 }
 
-# Profit shutdown (electricity only, stubs for now)
-PROFIT_SHUTDOWN_MEDIAN: float = -0.1      # GCAM default
-PROFIT_SHUTDOWN_STEEPNESS: float = 6.0
+# Profit shutdown (electricity only)
 PROFIT_SHUTDOWN_OIL_MEDIAN: float = -0.5  # GCAM: refined liquids steam/CT
 
 # Nuclear/hydro construction pipeline
-CONSTRUCTION_TIMES: dict[str, int] = {"nuclear": 2, "hydro": 1}  # periods delay
+CONSTRUCTION_TIMES: dict[str, int] = {"nuclear": 3}  # periods delay (15 years)
 
 # ---------------------------------------------------------------------------
 # Learning-by-doing (WITCH-style experience curves)
-# Cost(t) = Cost_0 * (Q_cum(t) / Q_0)^(-learn_exp)
-# learn_exp = ln(1 - LR) / ln(2), where LR = learning rate
+# (cost_floor_fraction moved to LearningConfig in ghim.core.config)
 # ---------------------------------------------------------------------------
 LEARNING_RATES: dict[str, float] = {
-    # Electricity
-    "solar": 0.20,          # 20% cost reduction per capacity doubling
-    "wind": 0.12,           # 12%
-    "biomass": 0.05,        # 5%
-    "nuclear": 0.03,        # 3% (slow learning)
-    "coal": 0.0,
-    "gas": 0.0,
-    "hydro": 0.0,
-    "oil": 0.0,
-    # Hydrogen
-    "electrolysis": 0.15,   # 15% (scaling technology)
-    "smr": 0.0,
-    # Refining
-    "oil_refining": 0.0,
+    "solar": 0.20, "wind": 0.12, "biomass": 0.05, "nuclear": 0.03,
+    "coal": 0.0, "gas": 0.0, "hydro": 0.0, "oil": 0.0,
+    "electrolysis": 0.15, "smr": 0.0, "oil_refining": 0.0,
 }
-COST_FLOOR_FRACTION: float = 0.2  # costs can't fall below 20% of initial
-
-# ---------------------------------------------------------------------------
-# Solver
-# ---------------------------------------------------------------------------
-PRICE_TOL: float = 1e-3      # relative price convergence tolerance
-MAX_PRICE_ITER: int = 100    # max iterations for market clearing
-PRICE_DAMP: float = 0.5      # damping factor for price updates
 
 # ---------------------------------------------------------------------------
 # Energy unit conversions
 # ---------------------------------------------------------------------------
-EJ_PER_MTOE: float = 0.04186  # exajoules per million tonnes of oil equivalent
+EJ_PER_MTOE: float = 0.04186
 GJ_PER_KWH: float = 0.0036
 HOURS_PER_YEAR: float = 8760.0
-TC_TO_TCO2: float = 44.0 / 12.0  # tonnes carbon → tonnes CO2
 
-# ---------------------------------------------------------------------------
-# Capital recovery factor helper
-# ---------------------------------------------------------------------------
 
 def capital_recovery_factor(rate: float, lifetime: int) -> float:
     """Annualized payment factor for a given discount rate and lifetime."""
@@ -198,53 +166,22 @@ def capital_recovery_factor(rate: float, lifetime: int) -> float:
 DEFAULT_SSP: str = "SSP2"
 
 # ---------------------------------------------------------------------------
-# Carbon coefficients (tC per GJ of fuel input)
-# Source: IPCC defaults, approximated
+# Trade solver parameters (not in TradeConfig)
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Inter-regional trade
-# ---------------------------------------------------------------------------
-TRADED_FUELS: list[str] = ["coal", "oil", "gas"]
-TRADE_PRICE_TOL: float = 0.01          # $/GJ tolerance for market clearing
-TRADE_MAX_ITER: int = 50               # max bisection iterations
-TRADE_PRICE_FLOOR: float = 0.1         # min world price $/GJ
-TRADE_PRICE_CEILING: float = 50.0      # max world price $/GJ
-TRADE_DEMAND_MAX_ITER: int = 10        # max demand-trade iterations per period
-TRADE_DEMAND_DAMP: float = 0.5         # damping for price updates between iterations
-TRADE_DEMAND_TOL: float = 0.02         # 2% relative price convergence for demand loop
-TRADE_MAX_PRICE_CHANGE: float = 0.30   # max fractional price change per period (30%)
-TRADE_MAX_PROD_DECLINE: float = 0.30   # max 30% production decline per region per period
+TRADE_PRICE_TOL: float = 0.01
+TRADE_PRICE_FLOOR: float = 0.1
+TRADE_PRICE_CEILING: float = 50.0
+TRADE_DEMAND_TOL: float = 0.02
 
 # ---------------------------------------------------------------------------
-# KLEM-Sector coupling (WITCH-style)
+# KLEM-Sector coupling
 # ---------------------------------------------------------------------------
-KLEM_SCALE_CLAMP: tuple[float, float] = (0.5, 2.0)  # deprecated, kept for compat
-GCAM3_TO_2020_DEFLATOR: float = 3.79   # 1975$ → 2020$ GDP deflator (BEA 105.381/27.800)
+KLEM_SCALE_CLAMP: tuple[float, float] = (0.5, 2.0)  # deprecated
+GCAM3_TO_2020_DEFLATOR: float = 3.79  # 1975$ -> 2020$ (BEA 105.381/27.800)
 
 # Observed 2020 fossil fuel prices (2020$/GJ) from BP Statistical Review
-# via input/gcamdata/inst/extdata/energy/A10.rsrc_info_fossils.csv
-# Converted: oil $41.84/bbl ÷ 6.193 GJ/bbl, coal avg($69.01,$50.13)/tonne ÷ 34.12 GJ/t,
-# gas $4.06/mmBtu ÷ 1.055 GJ/mmBtu. These are world (extraction) prices, not delivered.
 OBSERVED_FUEL_PRICES_2020: dict[str, float] = {
-    "coal": 1.75,   # $/GJ
-    "oil": 6.76,    # $/GJ
-    "gas": 3.85,    # $/GJ
-}
-
-# ---------------------------------------------------------------------------
-# Carbon coefficients (tC per GJ of fuel input)
-# Source: IPCC defaults, approximated
-# ---------------------------------------------------------------------------
-CARBON_COEFS: dict[str, float] = {
-    "coal": 0.0257,           # ~94.6 kgCO2/GJ → 25.8 kgC/GJ
-    "gas": 0.0153,            # ~56.1 kgCO2/GJ → 15.3 kgC/GJ
-    "refined liquids": 0.0,    # emissions at refining stage (avoid double-count)
-    "biomass": 0.0,           # carbon neutral (biogenic)
-    "nuclear": 0.0,
-    "hydro": 0.0,
-    "wind": 0.0,
-    "solar": 0.0,
-    "geothermal": 0.0,
-    "hydrogen": 0.0,          # emissions at production stage
-    "electricity": 0.0,       # emissions at generation stage
+    "coal": 1.75,
+    "oil": 6.76,
+    "gas": 3.85,
 }

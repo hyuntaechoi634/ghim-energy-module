@@ -11,7 +11,8 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from ghim.config import GHIM_DATA_EXT, GCAM3_TO_2020_DEFLATOR, BASE_YEAR
+from ghim.core.config import BASE_YEAR
+from ghim.config import GHIM_DATA_EXT, GCAM3_TO_2020_DEFLATOR
 from ghim.regions import R10_REGIONS, build_iso_to_r10
 from ghim.energy.supply import ResourceSupply, ResourceGrade
 

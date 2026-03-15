@@ -414,11 +414,17 @@ def build_region(
         and hasattr(calibrator, 'get_subsector_carrier_shares')):
         _apply_subsector_calibration(buildings, calibrator, carrier_prices, region_name)
 
-    # Set region-specific subsector income elasticities (from GCAM trajectory)
-    if hasattr(calibrator, 'dataset') and calibrator.dataset.bld_sub_income_elas:
-        region_elas = calibrator.dataset.bld_sub_income_elas.get(region_name, {})
+    # Set region-specific demand curves + income elasticities
+    if hasattr(calibrator, 'dataset'):
+        ds = calibrator.dataset
+        # Demand curves (non-parametric satiation from GCAM trajectory)
+        region_curves = ds.bld_sub_demand_curves.get(region_name, {})
+        if region_curves:
+            buildings._sub_demand_curves = region_curves
+        # Income elasticities (fallback for post-cal extrapolation)
+        region_elas = ds.bld_sub_income_elas.get(region_name, {})
         if region_elas:
-            buildings._sub_income_elas = dict(buildings._sub_income_elas)  # copy default
+            buildings._sub_income_elas = dict(buildings._sub_income_elas)
             buildings._sub_income_elas.update(region_elas)
 
     transport = TransportSector()
@@ -1042,17 +1048,8 @@ def _apply_calibration(
                 and hasattr(calibrator, 'get_subsector_carrier_shares')
             )
 
-            # Update buildings independent subsector demands from GCAM
-            if has_subsector and hasattr(sector, 'calibrate_subsector_demands'):
-                sub_totals: dict[str, float] = {}
-                for sub in sector.subsectors:
-                    st = calibrator.get_subsector_total(
-                        period, sub.name, region_name,
-                    )
-                    if st is not None and st > 0:
-                        sub_totals[sub.name] = st
-                if sub_totals:
-                    sector.calibrate_subsector_demands(sub_totals, rs=rs)
+            # Buildings subsector demands driven by non-parametric demand
+            # curves (from GCAM trajectory) — no calibrate_subsector_demands needed
 
             # For multi-subsector sectors (industry EU/FS, transport pass/freight):
             # sector-level carrier shares must be adjusted per subsector so that

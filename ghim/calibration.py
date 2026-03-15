@@ -100,6 +100,13 @@ class CalibrationDataset:
     # Derived from GCAM trajectory: α = ln(d_end/d_base) / ln(GDP_end/GDP_base)
     bld_sub_income_elas: dict[str, dict[str, float]] = field(default_factory=dict)
 
+    # Buildings subsector demand curves: region → subsector → list[(gdp_per_cap_k, demand_per_cap_gj)]
+    # Non-parametric satiation: interpolated from GCAM trajectory.
+    # demand = interp(gdp_per_cap) × pop × (P/P₀)^γ × climate
+    bld_sub_demand_curves: dict[str, dict[str, list[tuple[float, float]]]] = field(
+        default_factory=dict,
+    )
+
     # Electricity T&D+ownuse combined loss rate: region → year → fraction
     # loss_rate = 1 - (FE_electricity / generation)
     # Applied as: generation = FE_demand / (1 - loss_rate)

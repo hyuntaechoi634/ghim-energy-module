@@ -151,6 +151,8 @@ class BuildingsSector(DemandSector):
         # Per-subsector income elasticity and base price
         self._sub_income_elas: dict[str, float] = dict(_DEFAULT_SUB_INCOME_ELAS)
         self._sub_base_prices: dict[str, float] = {}
+        # Non-parametric demand curves: subsector → list[(gdp_pc_k, demand_pc_gj)]
+        self._sub_demand_curves: dict[str, list[tuple[float, float]]] = {}
 
         # Legacy: still used by _apply_calibration for fraction update
         self._sub_fractions: dict[str, float] = {}
@@ -179,25 +181,36 @@ class BuildingsSector(DemandSector):
     def _subsector_demand(self, sub: Subsector, rs: RegionState) -> float:
         """Independent demand envelope for a single subsector.
 
-        E_sub = base_demand_sub × (GDP/GDP₀)^α_sub × (P_sub/P₀_sub)^γ × climate
+        When a demand curve is available (from GCAM trajectory):
+          demand_pc = interp(GDP/cap)   — non-parametric satiation
+          E_sub = demand_pc × pop / 1000 × (P/P₀)^γ × climate
+
+        Fallback (no curve):
+          E_sub = base_demand × (GDP/GDP₀)^α × (P/P₀)^γ × climate
         """
-        if sub.base_demand <= 0 or self.base_gdp <= 0:
+        pop = getattr(rs, "population", 0.0) or self.base_population
+        if self.base_gdp <= 0:
             return 0.0
 
-        gdp_ratio = rs.gdp / self.base_gdp
-        alpha = self._sub_income_elas.get(
-            sub.name, self.income_elasticity,
-        )
-
-        # Subsector price index
+        # Price response
         sub_price = sub.price_index(rs.carrier_prices)
         sub_base_price = self._sub_base_prices.get(sub.name, self.base_price)
         price_ratio = max(sub_price / sub_base_price, 0.01) if sub_base_price > 0 else 1.0
+        price_factor = price_ratio ** self.price_elasticity
 
-        demand = sub.base_demand * (
-            gdp_ratio ** alpha
-            * price_ratio ** self.price_elasticity
-        )
+        # Income-driven demand: curve (preferred) or elasticity (fallback)
+        curve = self._sub_demand_curves.get(sub.name)
+        if curve and len(curve) >= 2 and pop > 0:
+            gdp_per_cap_k = rs.gdp / pop
+            demand_pc_gj = _interpolate_curve(curve, gdp_per_cap_k)
+            demand = demand_pc_gj * pop / 1000.0  # GJ/cap × million / 1000 = EJ
+            demand *= price_factor
+        else:
+            if sub.base_demand <= 0:
+                return 0.0
+            gdp_ratio = rs.gdp / self.base_gdp
+            alpha = self._sub_income_elas.get(sub.name, self.income_elasticity)
+            demand = sub.base_demand * (gdp_ratio ** alpha) * price_factor
 
         # Climate scaling
         if "heating" in sub.name:

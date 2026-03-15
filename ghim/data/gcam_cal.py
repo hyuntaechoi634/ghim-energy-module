@@ -608,6 +608,29 @@ def load_gcam_calibration(
                     _math.log(d_ratio) / _math.log(gdp_ratio)
                 )
 
+    # --- Buildings subsector demand curves (non-parametric satiation) ---
+    bld_sub_demand_curves: dict[str, dict[str, list[tuple[float, float]]]] = {}
+    _bld_subs = [
+        "residential.heating", "residential.cooling", "residential.other",
+        "commercial.heating", "commercial.cooling", "commercial.other",
+    ]
+    for region in regions:
+        bld_sub_demand_curves[region] = {}
+        pop_by_year = population.get(region, {})
+        gdp_by_year = gdp.get(region, {})
+        for sub_name in _bld_subs:
+            curve: list[tuple[float, float]] = []
+            for yr in sorted(gdp_by_year.keys()):
+                g = gdp_by_year.get(yr, 0)
+                p = pop_by_year.get(yr, 0)
+                d = subsector_totals.get(region, {}).get(yr, {}).get(sub_name, 0)
+                if g > 0 and p > 0 and d >= 0:
+                    gdp_pc = g / p  # $k/cap (billion$/million)
+                    d_pc = d * 1000 / p  # GJ/cap (EJ/million × 1000)
+                    curve.append((gdp_pc, d_pc))
+            if curve:
+                bld_sub_demand_curves[region][sub_name] = curve
+
     # --- Electricity T&D+ownuse combined loss rate ---
     elec_td_loss: dict[str, dict[int, float]] = {}
     for region in regions:
@@ -644,6 +667,7 @@ def load_gcam_calibration(
         subsector_carrier_shares=subsector_carrier_shares,
         elec_generation=elec_generation,
         bld_sub_income_elas=bld_sub_income_elas,
+        bld_sub_demand_curves=bld_sub_demand_curves,
         elec_td_loss=elec_td_loss,
         heat_production=heat_production,
         h2_production=h2_production,

@@ -583,6 +583,31 @@ def load_gcam_calibration(
                 if gen > 0:
                     elec_generation[region][int(year)] = float(gen)
 
+    # --- Buildings subsector income elasticity (region × subsector) ---
+    import math as _math
+    bld_sub_income_elas: dict[str, dict[str, float]] = {}
+    _bld_subs = [
+        "residential.heating", "residential.cooling", "residential.other",
+        "commercial.heating", "commercial.cooling", "commercial.other",
+    ]
+    _base_yr = years[0] if years else 2021
+    _end_yr = years[-1] if years else 2100
+    for region in regions:
+        bld_sub_income_elas[region] = {}
+        gdp_base = gdp.get(region, {}).get(_base_yr, 0)
+        gdp_end = gdp.get(region, {}).get(_end_yr, 0)
+        if gdp_end <= gdp_base or gdp_base <= 0:
+            continue
+        gdp_ratio = gdp_end / gdp_base
+        for sub_name in _bld_subs:
+            d_base = subsector_totals.get(region, {}).get(_base_yr, {}).get(sub_name, 0)
+            d_end = subsector_totals.get(region, {}).get(_end_yr, {}).get(sub_name, 0)
+            if d_base > 0.001 and d_end > 0.001:
+                d_ratio = d_end / d_base
+                bld_sub_income_elas[region][sub_name] = (
+                    _math.log(d_ratio) / _math.log(gdp_ratio)
+                )
+
     # --- Electricity T&D+ownuse combined loss rate ---
     elec_td_loss: dict[str, dict[int, float]] = {}
     for region in regions:
@@ -618,6 +643,7 @@ def load_gcam_calibration(
         subsector_totals=subsector_totals,
         subsector_carrier_shares=subsector_carrier_shares,
         elec_generation=elec_generation,
+        bld_sub_income_elas=bld_sub_income_elas,
         elec_td_loss=elec_td_loss,
         heat_production=heat_production,
         h2_production=h2_production,

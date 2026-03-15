@@ -414,6 +414,13 @@ def build_region(
         and hasattr(calibrator, 'get_subsector_carrier_shares')):
         _apply_subsector_calibration(buildings, calibrator, carrier_prices, region_name)
 
+    # Set region-specific subsector income elasticities (from GCAM trajectory)
+    if hasattr(calibrator, 'dataset') and calibrator.dataset.bld_sub_income_elas:
+        region_elas = calibrator.dataset.bld_sub_income_elas.get(region_name, {})
+        if region_elas:
+            buildings._sub_income_elas = dict(buildings._sub_income_elas)  # copy default
+            buildings._sub_income_elas.update(region_elas)
+
     transport = TransportSector()
     tr_demands = _ar6_carrier_demands(
         "transport", fd.get("transport", 1.0), _transport_carrier_demands,

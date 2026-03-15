@@ -96,6 +96,10 @@ class CalibrationDataset:
     # (includes T&D losses, own-use — larger than FE electricity demand)
     elec_generation: dict[str, dict[int, float]] = field(default_factory=dict)
 
+    # Buildings subsector income elasticity: region → subsector → float
+    # Derived from GCAM trajectory: α = ln(d_end/d_base) / ln(GDP_end/GDP_base)
+    bld_sub_income_elas: dict[str, dict[str, float]] = field(default_factory=dict)
+
     # Electricity T&D+ownuse combined loss rate: region → year → fraction
     # loss_rate = 1 - (FE_electricity / generation)
     # Applied as: generation = FE_demand / (1 - loss_rate)

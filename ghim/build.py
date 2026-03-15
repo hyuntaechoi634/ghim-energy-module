@@ -975,6 +975,10 @@ def _apply_calibration(
     _post_mode = _tcfg.get("post_cal_mode", "decay")
 
     if period > _cal_end:
+        # Release exogenous GDP — CES determines GDP endogenously post-cal
+        if model.exogenous_gdp is not None:
+            model.exogenous_gdp = None
+
         if _post_mode == "decay" and _run_end > _cal_end:
             # Linear decay: pref_weight → 0 by run_end
             t = (period - _cal_end) / (_run_end - _cal_end)

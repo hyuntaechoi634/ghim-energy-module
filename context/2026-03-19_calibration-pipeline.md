@@ -123,14 +123,18 @@ Full calibration pipeline restructuring for H2, district heat, demand carrier sh
 
 ### Refactor (높은 우선순위)
 1. **AR6 완전 삭제** — AR6Calibrator class, ar6_cal.py, is_native_r32 분기, R5 매핑 전부 제거
-2. **Calibrator 모수화** — `--cal-source GCAM-v8.2 --cal-scenario SSP2-Ref` CLI, dataset만 바꾸면 어떤 모형/시나리오든 calibration 가능
-3. **Calibration 연도 모수화**:
-   - `cal_start_year`: 데이터셋 시작 (1975, 2000, 2005 등)
-   - `cal_end_year`: 데이터셋 끝 (2100)
-   - `run_end_year`: 모형 실행 끝 (2150)
-   - cal_start~cal_end: calibration target 적용 (pref 보정, pref_weight, gen target)
-   - cal_end~run_end: calibration 없이 자유 전개 (학습된 preference carry forward)
-   - 현재 BASE_YEAR=2021, FUTURE_YEARS 고정 → 이것도 데이터셋에서 자동 결정
+2. **Calibration 인터페이스 재설계** (유저 확정):
+   ```
+   calibrate = True (default)
+     ├── dataset 없음 → GCAM-v8.2 / SSP2-Ref / 1975-2100 / run_end=2100
+     ├── dataset 있음 + model_name/scenario 없음 → 유저에게 되물음 (error)
+     └── dataset 있음 + model_name/scenario 있음 → 해당 데이터로 calibration
+         ├── cal_start, cal_end: 데이터셋에서 자동 결정 (유저 override 가능)
+         └── run_end: default = cal_end (유저가 2150 등으로 연장 가능)
+   calibrate = False
+     └── 이전에 저장된 calibrated params 로드해서 바로 solve
+   ```
+3. **Calibrated params 저장/로드**: pref_factors, sector_pref_weight, _target_svc_shares, vintage state 등을 파일로 저장 → 재활용
 4. **DEFAULT_ELEC_SHARES 등 R10 legacy dict 삭제** — GCAM fallback으로 대체 완료
 5. R10은 trade module에서만 사용 → 유지
 

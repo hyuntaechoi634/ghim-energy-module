@@ -975,7 +975,7 @@ def _apply_calibration(
                 for sector in region.transformation:
                     if decay < 0.01 and hasattr(sector, '_target_tech_shares'):
                         sector._target_tech_shares = None
-        # HOLD mode: keep pref_weight + targets, release generation_target
+        # HOLD mode: all calibrated values persist from cal_end
         return
 
     for region_name, region in model.regions.items():
@@ -1281,11 +1281,16 @@ def oop_run_model(
                 _apply_calibration(model, state, period)
                 state.period = period  # restore after recal
 
-        # Snapshot cal_end pref_weights for post-calibration decay
+        # Snapshot cal_end values for post-calibration
         if period == _cal_end:
             for name, region in model.regions.items():
                 for sector in region.demand_sectors:
                     sector._cal_end_pref_weight = sector.sector_pref_weight
+                    # Buildings: snapshot subsector totals
+                    if hasattr(sector, '_sub_fractions') and hasattr(sector, 'subsectors'):
+                        sector._cal_end_sub_totals = {
+                            sub.name: sub.base_demand for sub in sector.subsectors
+                        }
 
         # GDP tracking diagnostic (endogenous mode)
         if model.exogenous_gdp is None:

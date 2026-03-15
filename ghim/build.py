@@ -1035,21 +1035,17 @@ def _apply_calibration(
                 and hasattr(calibrator, 'get_subsector_carrier_shares')
             )
 
-            # Update buildings subsector fractions from GCAM each period
-            if has_subsector and hasattr(sector, '_sub_fractions'):
-                new_fracs: dict[str, float] = {}
-                frac_total = 0.0
+            # Update buildings independent subsector demands from GCAM
+            if has_subsector and hasattr(sector, 'calibrate_subsector_demands'):
+                sub_totals: dict[str, float] = {}
                 for sub in sector.subsectors:
                     st = calibrator.get_subsector_total(
                         period, sub.name, region_name,
                     )
-                    val = st if st is not None and st > 0 else 0.0
-                    new_fracs[sub.name] = val
-                    frac_total += val
-                if frac_total > 0:
-                    sector._sub_fractions = {
-                        k: v / frac_total for k, v in new_fracs.items()
-                    }
+                    if st is not None and st > 0:
+                        sub_totals[sub.name] = st
+                if sub_totals:
+                    sector.calibrate_subsector_demands(sub_totals, rs=rs)
 
             # For multi-subsector sectors (industry EU/FS, transport pass/freight):
             # sector-level carrier shares must be adjusted per subsector so that
@@ -1202,7 +1198,6 @@ def _apply_calibration(
                             ratio ** (1.0 / gamma) - 1.0
                         )
                     else:
-                        # Fallback: if gamma ≈ 0, price channel inactive
                         sector._demand_scale = ratio
 
                 rs.gdp = orig_gdp

@@ -1,10 +1,13 @@
-"""BuildingsSector — Res/Com × Heating/Cooling/Other × 8 carriers.
+"""BuildingsSector — Res/Com × Heating/Cooling/Other with independent subsector demands.
 
-Most complex demand sector.  Phase 1: demand_envelope with HDD/CDD scaling
-for heating/cooling subsectors.  Full floorspace satiation model deferred
-to Phase 2.
+Each subsector (residential.heating, commercial.cooling, etc.) has its own
+demand envelope driven by floorspace satiation, subsector-specific income
+elasticity, and HDD/CDD for thermal services.  Total buildings demand is the
+SUM of all subsector demands (bottom-up), not a top-down split.
 
-8 carriers including district Heat.
+Carrier competition occurs independently within each subsector via logit.
+
+Data source: gcamdata A44.* parameter files.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from ghim.core.carrier import CARBON_COEFS, TC_TO_TCO2
 from ghim.core.emissions import EmissionResult
 from ghim.core.state import RegionState
 from ghim.core.technology import EndUseTech
-from ghim.sectors.abc import DemandSector, Subsector
+from ghim.sectors.abc import DemandSector, Subsector, _interpolate_curve
 
 
 def _heating_techs() -> list[EndUseTech]:
@@ -64,36 +67,44 @@ def _other_techs() -> list[EndUseTech]:
     ]
 
 
-# Default subsector fractions of total buildings demand
-_DEFAULT_FRACTIONS = {
-    "residential.heating": 0.25,
-    "residential.cooling": 0.05,
-    "residential.other": 0.20,
-    "commercial.heating": 0.20,
-    "commercial.cooling": 0.10,
-    "commercial.other": 0.20,
+# Per-subsector income elasticity defaults.
+# "Other" (appliances, electronics) grows faster with income.
+# Cooling grows fast in developing countries (AC penetration).
+# Heating grows slowly (building shell improvement offsets income growth).
+# Source: GCAM A44 satiation_mult + stylized income-dependence.
+_DEFAULT_SUB_INCOME_ELAS: dict[str, float] = {
+    "residential.heating": 0.40,
+    "residential.cooling": 0.90,
+    "residential.other": 0.70,
+    "commercial.heating": 0.35,
+    "commercial.cooling": 0.80,
+    "commercial.other": 0.85,
+}
+
+# GCAM A44 service satiation multiplier (SSP2):
+# "Others" services grow 1.3× base rate (appliance proliferation).
+_DEFAULT_SATIATION_MULT: dict[str, float] = {
+    "residential.other": 1.3,
+    "commercial.other": 1.3,
 }
 
 
 class BuildingsSector(DemandSector):
-    """Residential + Commercial buildings with floorspace satiation.
+    """Residential + Commercial buildings with independent subsector demands.
 
     6 subsectors: Res/Com × Heating/Cooling/Other.
-    Heating and cooling respond to HDD/CDD from external climate module.
+    Each subsector computes its own demand envelope; total = SUM.
 
-    Floorspace satiation model (Phase 1):
+    Floorspace satiation model:
       F(y) = F̄ − (F̄ − F_min) × exp(−y / ŷ)
-      where y = GDP per capita ($k), F̄ = max floorspace per capita (m²/cap),
-      ŷ = income at satiation midpoint, F_min = minimum floorspace.
-
-    Total demand = F(y) × pop × d̄_svc × (P/P_base)^γ
+      drives the overall building energy intensity calibration.
     """
 
     income_elasticity: float = 0.5
     price_elasticity: float = -0.3
 
     # Income elasticity curve from gcamdata A42.inc_elas.csv.
-    # Converted from 1990$k/cap to 2020$k/cap (×1.80 GDP deflator).
+    # Used as sector-level fallback; subsectors use their own elasticities.
     _income_elas_curve: list[tuple[float, float]] = [
         (0.0, 1.25),
         (4.5, 1.0),      # 2.5 × 1.80
@@ -115,7 +126,7 @@ class BuildingsSector(DemandSector):
     floorspace_max: float = 75.0      # m²/cap (satiation)
     floorspace_min: float = 15.0      # m²/cap (minimum)
     income_midpoint: float = 40.0     # $k/cap PPP (midpoint of S-curve)
-    energy_intensity: float = 0.40    # GJ/m²/yr (energy service density)
+    energy_intensity: float = 0.40    # GJ/m²/yr (calibrated at base year)
 
     def __init__(
         self,
@@ -136,7 +147,13 @@ class BuildingsSector(DemandSector):
         self.base_population = 0.0
         self._hdd_base: float = 1.0
         self._cdd_base: float = 1.0
-        self._sub_fractions: dict[str, float] = dict(_DEFAULT_FRACTIONS)
+
+        # Per-subsector income elasticity and base price
+        self._sub_income_elas: dict[str, float] = dict(_DEFAULT_SUB_INCOME_ELAS)
+        self._sub_base_prices: dict[str, float] = {}
+
+        # Legacy: still used by _apply_calibration for fraction update
+        self._sub_fractions: dict[str, float] = {}
 
     def floorspace_per_capita(self, gdp_per_cap_k: float) -> float:
         """Floorspace per capita (m²/cap) from income satiation curve.
@@ -149,51 +166,57 @@ class BuildingsSector(DemandSector):
         )
 
     def demand_envelope(self, rs: RegionState) -> float:
-        """Total sector energy demand (EJ) with floorspace satiation.
+        """Total sector energy demand (EJ).
 
-        When use_floorspace=True:
-          E = F(y) × pop × d̄_svc × (P/P_base)^γ / EJ_conversion
-        Otherwise: standard demand_envelope from ABC.
+        Sum of all subsector demands.  Used by sector_price_index
+        and other aggregation methods.
         """
-        if not self.use_floorspace or self.base_gdp <= 0 or rs.population <= 0:
-            return super().demand_envelope(rs)
-
-        gdp_per_cap_k = rs.gdp / rs.population  # billion USD / million = $k/cap
-        floorspace_pc = self.floorspace_per_capita(gdp_per_cap_k)
-        total_floorspace = floorspace_pc * rs.population  # million m²
-
-        # Energy = floorspace × energy_intensity (GJ/m²/yr) × (1e6 m² / 1e9 GJ/EJ)
-        # = floorspace_M_m2 × intensity × 1e-3 EJ
-        energy_ej = total_floorspace * self.energy_intensity * 1e-3
-
-        # Price response
-        price_ratio = max(
-            self.sector_price_index(rs) / self.base_price, 0.01,
+        return sum(
+            self._subsector_demand(sub, rs)
+            for sub in self.subsectors
         )
-        energy_ej *= price_ratio ** self.price_elasticity
 
-        return max(energy_ej, 0.0)
+    def _subsector_demand(self, sub: Subsector, rs: RegionState) -> float:
+        """Independent demand envelope for a single subsector.
+
+        E_sub = base_demand_sub × (GDP/GDP₀)^α_sub × (P_sub/P₀_sub)^γ × climate
+        """
+        if sub.base_demand <= 0 or self.base_gdp <= 0:
+            return 0.0
+
+        gdp_ratio = rs.gdp / self.base_gdp
+        alpha = self._sub_income_elas.get(
+            sub.name, self.income_elasticity,
+        )
+
+        # Subsector price index
+        sub_price = sub.price_index(rs.carrier_prices)
+        sub_base_price = self._sub_base_prices.get(sub.name, self.base_price)
+        price_ratio = max(sub_price / sub_base_price, 0.01) if sub_base_price > 0 else 1.0
+
+        demand = sub.base_demand * (
+            gdp_ratio ** alpha
+            * price_ratio ** self.price_elasticity
+        )
+
+        # Climate scaling
+        if "heating" in sub.name:
+            hdd_ratio = rs.hdd / self._hdd_base if self._hdd_base > 0 else 1.0
+            demand *= max(hdd_ratio, 0.0)
+        elif "cooling" in sub.name:
+            cdd_ratio = rs.cdd / self._cdd_base if self._cdd_base > 0 else 1.0
+            demand *= max(cdd_ratio, 0.0)
+
+        return max(demand, 0.0)
 
     def compute_demand(
         self, rs: RegionState, policy: Any = None,
     ) -> dict[str, float]:
-        total = self.demand_envelope(rs)
         year = getattr(rs, "_year", None) or 2021
-
-        # Climate scaling for heating/cooling
-        hdd_ratio = rs.hdd / self._hdd_base if self._hdd_base > 0 else 1.0
-        cdd_ratio = rs.cdd / self._cdd_base if self._cdd_base > 0 else 1.0
 
         result: dict[str, float] = {}
         for sub in self.subsectors:
-            frac = self._sub_fractions.get(sub.name, 0.1)
-            sub_total = frac * total
-
-            # Apply climate scaling
-            if "heating" in sub.name:
-                sub_total *= max(hdd_ratio, 0.0)
-            elif "cooling" in sub.name:
-                sub_total *= max(cdd_ratio, 0.0)
+            sub_total = self._subsector_demand(sub, rs)
 
             shares = sub.compute_shares(
                 rs.carrier_prices, year=year, policy=policy,
@@ -236,7 +259,7 @@ class BuildingsSector(DemandSector):
         self._cdd_base = max(cdd_base, 1e-6)
 
         for sub in self.subsectors:
-            frac = self._sub_fractions.get(sub.name, 0.1)
+            frac = self._sub_fractions.get(sub.name, 1.0 / len(self.subsectors))
             sub.base_demand = self.base_demand * frac
             if sub.base_demand > 0:
                 shares = np.array([
@@ -247,6 +270,62 @@ class BuildingsSector(DemandSector):
                 shares /= shares.sum()
                 sub.calibrate(shares, base_prices)
 
-        self.base_price = self.sector_price_index(
-            RegionState(carrier_prices=base_prices),
-        )
+        # Set per-subsector base prices
+        rs_cal = RegionState(carrier_prices=base_prices)
+        for sub in self.subsectors:
+            self._sub_base_prices[sub.name] = sub.price_index(rs_cal.carrier_prices)
+
+        self.base_price = self.sector_price_index(rs_cal)
+
+    def calibrate_subsector_demands(
+        self,
+        subsector_totals: dict[str, float],
+        rs: RegionState | None = None,
+    ) -> None:
+        """Update subsector base_demands so demand_envelope reproduces targets.
+
+        Back-calculates base_demand for each subsector such that
+        ``_subsector_demand(sub, rs) ≈ target`` at current GDP/prices/climate.
+
+        Parameters
+        ----------
+        subsector_totals : dict mapping subsector name → FE target in EJ
+        rs : current RegionState (needed for GDP, prices, HDD/CDD)
+        """
+        for sub in self.subsectors:
+            target = subsector_totals.get(sub.name)
+            if target is None or target <= 0:
+                continue
+
+            if rs is None or self.base_gdp <= 0:
+                sub.base_demand = target
+                continue
+
+            # Back-calculate: target = base × (GDP/GDP₀)^α × (P/P₀)^γ × climate
+            gdp_ratio = rs.gdp / self.base_gdp
+            alpha = self._sub_income_elas.get(sub.name, self.income_elasticity)
+            income_factor = gdp_ratio ** alpha if gdp_ratio > 0 else 1.0
+
+            sub_price = sub.price_index(rs.carrier_prices)
+            sub_bp = self._sub_base_prices.get(sub.name, self.base_price)
+            price_ratio = max(sub_price / sub_bp, 0.01) if sub_bp > 0 else 1.0
+            price_factor = price_ratio ** self.price_elasticity
+
+            climate_factor = 1.0
+            if "heating" in sub.name:
+                climate_factor = rs.hdd / self._hdd_base if self._hdd_base > 0 else 1.0
+            elif "cooling" in sub.name:
+                climate_factor = rs.cdd / self._cdd_base if self._cdd_base > 0 else 1.0
+            climate_factor = max(climate_factor, 0.01)
+
+            denom = income_factor * price_factor * climate_factor
+            sub.base_demand = target / denom if denom > 0 else target
+
+        # Update _sub_fractions for backward compat
+        total = sum(sub.base_demand for sub in self.subsectors)
+        if total > 0:
+            self._sub_fractions = {
+                sub.name: sub.base_demand / total
+                for sub in self.subsectors
+            }
+        self.base_demand = total

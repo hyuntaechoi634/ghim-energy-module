@@ -119,6 +119,31 @@ Full calibration pipeline restructuring for H2, district heat, demand carrier sh
 7. `6d2c523` - R32 GCAM elec shares for vintage init + slides
 8. (pending) - FOM in variable cost for profit shutdown
 
+## Session 2 Progress (2026-03-16)
+
+### Completed
+- AR6Calibrator 완전 삭제 + CalibrationConfig 추가
+- T&D loss rate 도입 (replaces _generation_target)
+- Post-cal time extension (HOLD/DECAY mode, run_end parameter)
+- Anderson solver 구현 (full 325-dim vector, but slower than DampedSolver)
+- DampedSolver 최적화: FE_RECAL 3→2, 78s→51s
+- Region-specific buildings income elasticity (from GCAM trajectory)
+  - 상수 α overshoots (Gompertz saturation 미반영)
+  - calibrate_subsector_demands 유지, elasticity는 post-cal에서만 사용
+- Solver option: time_cfg={"solver": "anderson"} or "damped" (default)
+
+### Key Results
+- Calibration: 0% sectors, +0.1% FE, +1-2% elec gen, ±1pp tech mix
+- Post-cal (HOLD): GDP stable, FE 727→765, coal 24%→7%, solar 25%→48%
+- Post-cal elec share decline (37%→31%) — buildings subsector dynamics
+- Run time: 51s (26 periods, DampedSolver)
+
+### Learnings
+- 상수 income elasticity는 비선형 성장 (Gompertz) 재현 불가
+- Anderson이 느린 이유: deepcopy overhead in template management
+- T&D loss로 _generation_target 대체 → 더 clean한 architecture
+- DECAY mode에서 FE 진동 → HOLD이 더 안정적
+
 ## Next Steps When Resuming
 
 ### Refactor (높은 우선순위)

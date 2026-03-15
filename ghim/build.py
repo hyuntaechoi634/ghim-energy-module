@@ -1389,4 +1389,11 @@ def oop_run_model(
             state.global_emissions,
         )
 
+    # Auto-save calibrated model for re-use
+    _save_path = (_tcfg or {}).get("save_params")
+    if _save_path:
+        from ghim.calibration import save_calibrated_model
+        save_calibrated_model(model, state, solver, _save_path, _tcfg)
+        logger.info("Calibrated model saved to %s", _save_path)
+
     return results

@@ -283,10 +283,9 @@ def make_calibrator(
         config = CalibrationConfig()
 
     if not config.calibrate:
-        # Load saved params (Phase C — placeholder)
         if config.params_file is None:
             raise ValueError("calibrate=False requires params_file")
-        raise NotImplementedError("Saved params loading not yet implemented")
+        return load_calibrated_model(config.params_file, config)
 
     # Load dataset
     if config.dataset_path is not None:
@@ -330,7 +329,66 @@ def make_calibrator(
     return calibrator, time_info
 
 
-# AR6Calibrator removed — use Calibrator + CalibrationConfig
+# ---------------------------------------------------------------------------
+# Calibrated params save/load (pickle-based)
+# ---------------------------------------------------------------------------
+
+def save_calibrated_model(
+    model: Any,
+    state: Any,
+    solver: Any,
+    path: str,
+    time_info: dict[str, int] | None = None,
+) -> None:
+    """Save calibrated model + state + solver to a pickle file.
+
+    Includes all calibrated parameters (pref_factors, sector_pref_weight,
+    _target_svc_shares, _target_tech_shares, vintage state, demand curves).
+    """
+    import pickle
+    bundle = {
+        "model": model,
+        "state": state,
+        "solver": solver,
+        "time_info": time_info or {},
+    }
+    with open(path, "wb") as f:
+        pickle.dump(bundle, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_calibrated_model(
+    path: str,
+    config: CalibrationConfig | None = None,
+) -> tuple["Calibrator", dict[str, int]]:
+    """Load a previously saved calibrated model.
+
+    Returns (calibrator, time_info) — same interface as make_calibrator.
+    The full model/state/solver can be accessed via the returned calibrator's
+    ``_saved_bundle`` attribute.
+    """
+    import pickle
+    with open(path, "rb") as f:
+        bundle = pickle.load(f)
+
+    model = bundle["model"]
+    calibrator = getattr(model, "calibrator", None)
+    if calibrator is None:
+        raise ValueError(f"No calibrator found in saved model at {path}")
+
+    time_info = bundle.get("time_info", {})
+
+    # Override run_end if config specifies
+    if config and config.run_end is not None:
+        time_info["run_end"] = config.run_end
+    if config and config.post_cal_mode is not None:
+        time_info["post_cal_mode"] = config.post_cal_mode.value
+
+    # Attach bundle for downstream access
+    calibrator._saved_bundle = bundle
+
+    return calibrator, time_info
+
+
 # ---------------------------------------------------------------------------
 
 class Calibrator:

@@ -59,9 +59,17 @@ def main() -> None:
         help="Last model year (default: last calibration year, e.g. 2150)",
     )
     parser.add_argument(
-        "--post-cal-mode", default="decay",
+        "--post-cal-mode", default="hold",
         choices=["decay", "hold"],
-        help="Post-calibration pref_weight behavior (default: decay to 0)",
+        help="Post-calibration pref_weight behavior (default: hold)",
+    )
+    parser.add_argument(
+        "--save-params", default=None,
+        help="Save calibrated model to file for re-use",
+    )
+    parser.add_argument(
+        "--load-params", default=None,
+        help="Load previously calibrated model (skips calibration)",
     )
     args = parser.parse_args()
 
@@ -90,8 +98,11 @@ def main() -> None:
         calibrate=not args.no_calibrate,
         run_end=args.run_end,
         post_cal_mode=PostCalMode(args.post_cal_mode),
+        params_file=args.load_params,
     )
     _, time_cfg = make_calibrator(cal_config)
+    if args.save_params:
+        time_cfg["save_params"] = args.save_params
 
     from ghim.build import oop_run_model
     period_states = oop_run_model(

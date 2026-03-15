@@ -1332,7 +1332,14 @@ def oop_run_model(
                         _SECTOR_AR6_NAME.get(type(sector).__name__), {},
                     )
                     if sd:
-                        sector._last_demand_ej = sum(sd.values())
+                        new_demand = sum(sd.values())
+                        # Damped update to prevent cobweb oscillation
+                        # in post-cal when income elasticity feedback loops
+                        old = sector._last_demand_ej
+                        if old > 0:
+                            sector._last_demand_ej = 0.7 * new_demand + 0.3 * old
+                        else:
+                            sector._last_demand_ej = new_demand
 
         # --- TechChange: learning curve updates (gap #2) ---
         if model.tech_change is not None:

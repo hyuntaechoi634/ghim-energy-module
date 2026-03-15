@@ -1,179 +1,128 @@
 # Research Note — 2026-03-19: Calibration Pipeline Overhaul
 
-## Session Summary
+## Session Summary (2 sessions, 2026-03-16)
 
-Full calibration pipeline restructuring for H2, district heat, demand carrier shares, and electricity generation mix.
+Full calibration pipeline restructuring: H2/DH/carrier shares, electricity tech mix,
+AR6 removal, post-cal projection, solver optimization, buildings demand curves.
 
-## What Was Done
+## Session 1: Calibration Accuracy
 
-### 1. H2/DH Production Calibration (COMPLETED)
-- Added `heat_production`, `h2_production` to CalibrationDataset
-- Derived from demand-side FE aggregates (Σ sector_total × carrier_share)
-- `_generation_target` mechanism: 0.0% deviation all periods
+### Completed
+1. **H2/DH production calibration** — 0.0% deviation all periods
+2. **Demand carrier shares** — Industry heat tech, buildings heat, efficiency correction
+3. **sector_pref_weight** — replaces _demand_scale (price-channel mechanism)
+4. **Buildings independent subsector demands** — per-subsector income elasticity
+5. **Industry endogenous income elasticity** — inter-period demand carry-forward
+6. **Profit shutdown** — GCAM A23 params, FOM in var_cost, pref_weight flows through
+7. **R32 GCAM elec shares** — vintage initialization (South Korea nuclear -14pp→-0.8pp)
+8. **Vintage back-calculation** — new = (target×demand - surviving)/gap → ±1pp tech mix
+9. **Inline preference recalibration** — in model.F() every solver iteration
+10. **Tests**: 300s→9s (lru_cache on load_gcam_calibration)
 
-### 2. Demand Carrier Share Calibration (COMPLETED)
-- **Industry**: Added "heat" EndUseTech to EU subsector
-- **Buildings**: Added "heat" to `_other_techs()`
-- **Subsector-adjusted shares**: `_subsector_adjusted_shares()` for EU/FS split
-- **Efficiency correction**: FE→service share conversion (`tech_shares × effs`)
-- **Inline preference recalibration**: in `model.F()` every solver iteration using cached `_target_svc_shares`
+## Session 2: Architecture + Post-cal
 
-### 3. sector_pref_weight (COMPLETED)
-- Replaces `_demand_scale` (exogenous multiplier) with price-channel mechanism
-- `w = P × (ratio^(1/γ) − 1)` — analytically solved
-- Sector total demand adjusts via price elasticity, not fudge factor
-- `_demand_scale` removed from `demand_envelope()`
+### Completed
+11. **AR6 완전 삭제** — AR6Calibrator, ar6_cal.py, is_native_r32 분기 전부 제거 (-1077줄)
+12. **CalibrationConfig** — calibrate/model_name/scenario/cal_start/cal_end/run_end/post_cal_mode
+13. **T&D loss rate** — replaces _generation_target (demand × (1/(1-td_loss)))
+14. **Post-cal HOLD/DECAY** — 2100-2150 projection, exogenous GDP 해제
+15. **TFP trend extrapolation** — post-cal에서 마지막 성장률 외삽 (GDP 313→641T$)
+16. **calibration_year fix** — preference decay가 inline recal 후 적용되는 버그
+17. **Industry oscillation damping** — _last_demand_ej damped update (0.7×new + 0.3×old)
+18. **Anderson solver** — 325-dim full state vector (구현됨, DampedSolver가 더 빠름)
+19. **DampedSolver 최적화** — FE_RECAL 3→2, 78s→51s
+20. **Non-parametric demand curves** — buildings subsector GDP/cap→demand/cap lookup
+21. **sector_pref_weight → subsector 전달** — buildings override 수정 (Bld +27%→-4%)
+22. **CalibratedParams save/load** — pickle (~1.6MB)
+23. **Calibration pass bounded** — cal_end까지만 (post-cal TFP 감소 방지)
 
-### 4. Buildings Independent Subsector Demands (COMPLETED)
-- Each subsector (res/com × heating/cooling/other) has own demand envelope
-- Per-subsector income elasticity + HDD/CDD climate scaling
-- `calibrate_subsector_demands()` back-calculates base_demand from GCAM targets
-- Subsector fractions now endogenous (income-driven mix shift)
+## Current Calibration Results
 
-### 5. Industry Income Elasticity Fix (COMPLETED)
-- Was: `approx_demand = base_demand × GDP_ratio` → circular, premature satiation for developing countries
-- Now: `_last_demand_ej` from previous period (inter-period carry-forward)
-- Fully endogenous, recursive-dynamic structure
-
-### 6. Transport price_index Override (COMPLETED)
-- `_TransportSubsector.price_index()` now uses `lcot()` ($/km) instead of `levelized_cost()` (mixed units)
-
-### 7. Agriculture Calibration (COMPLETED)
-- Enabled via `_SECTOR_AR6_NAME["AgricultureSector"] = "agriculture"`
-
-### 8. Electricity R32 Init (COMPLETED)
-- Replaced R10 `DEFAULT_ELEC_SHARES` with GCAM R32 base year shares
-- Falls back to GCAM-v8.2 SSP2-Ref if no calibrator
-- South Korea nuclear: -14.2pp → -0.8pp
-
-### 9. Profit Shutdown (COMPLETED)
-- Added to VintageTracker/PipelineAwareVintageTracker
-- GCAM A23 params: median_shutdown_point=-0.1, steepness=6
-- pref_weight flows through to shutdown via unit conversion (pf × k/β)
-- FOM included in variable cost (not sunk — real ongoing cost)
-- All techs get profit shutdown (including renewables for consistency)
-
-### 10. Electricity Inline Recalibration (COMPLETED)
-- `_target_tech_shares` cached from `_apply_calibration`
-- Recalibrated at current LCOE in `model.F()` step 4pre
-
-## Current Calibration Results (2025-2100)
-
+### Calibration (2025-2100)
 | Metric | Result |
 |--------|--------|
 | GDP | 0.0% all periods |
-| Industry | 0% all periods |
-| Buildings | 0-1% |
+| Industry | ±1% |
+| Buildings | ±4% (2025) → ±1% (2050+) |
 | Transport | 0% |
-| Agriculture | -3→0% |
-| FE Total | +0.1% |
-| Electricity/H2/DH production | 0.0% |
-| Carrier gaps | ±2.7 EJ stable |
-| Elec tech mix | coal +2-6pp, solar -2-8pp (vintage inertia) |
+| FE Total | ±0.3% |
+| Elec generation | +1-2% (T&D loss based) |
+| Elec tech mix | ±1pp |
+| Carrier gaps | ±2.7 EJ |
 
-## Remaining Issues
+### Post-cal (2100-2150, HOLD mode)
+| Metric | 2100 | 2150 | Trend |
+|--------|------|------|-------|
+| GDP | 313T$ | 641T$ | +1.5%/yr |
+| GDP/cap | 31.7k | 69.7k | +2.0%/yr |
+| Population | 9.88B | 9.19B | -0.7%/yr |
+| FE | 724 EJ | 681-744 EJ | Industry oscillation |
+| Elec share | 36.4% | 36-38% | Stable |
+| Coal (elec) | 24% | ~7% | Natural retirement |
+| Solar (elec) | 25% | ~48% | Learning + new investment |
 
-### Electricity Tech Mix Gap (coal +4pp, solar -8pp at 2050)
-- Root cause: vintage inertia — coal profitable (cheap fuel), solar/wind underinvested
-- Profit shutdown helps but coal var_cost (11.2 $/GJ with FOM) < market_price (13)
-- FOM just added to var_cost — awaiting test results
-- Possible further fix: resource constraints for hydro/wind/solar (external model linkage)
+### Performance
+- Run time: 50s (26 periods, DampedSolver)
+- Tests: 491 pass, 9s
+- Save/load: 1.6MB pickle
 
-### Resource Constraints (Phase 2+ / External Linkage)
-- Hydro: no max generation cap → overinvested (+4pp)
-- Solar/Wind: no land/grid constraint
-- This motivates linkage with water/land-use models (design point, not bug)
+## Architecture Decisions Made
 
-### Legacy Code Cleanup Needed
-- `AR6Calibrator`: should be removed, replaced by `Calibrator`
-- `DEFAULT_ELEC_SHARES`, `DEFAULT_ELEC_TOTAL_EJ`: R10-based, dead code
-- `is_native_r32` checks: always True with GCAM, simplify
-- `R32_TO_R10` mapping: only needed for trade (separate concern)
-- Calibrator naming: should be parameterized by (model, scenario), not hardcoded "GCAM"
+1. **_generation_target 제거** → T&D loss rate (demand-driven, not quantity-forced)
+2. **_demand_scale 제거** → sector_pref_weight (price-channel)
+3. **calibrate_subsector_demands 유지** — 상수 α 부족 (Gompertz 미반영), demand curves 보완
+4. **Vintage back-calculation** — target_shares = effective target (not new-investment share)
+5. **Profit shutdown** — FOM in var_cost, pref_weight flows through (pf × k/β unit conversion)
+6. **Post-cal mode**: HOLD (default) > DECAY (unstable FE oscillation)
+7. **TFP extrapolation** — last calibration growth rate for post-cal
+8. **Solver**: DampedSolver default (51s) > Anderson (111s, needs deepcopy optimization)
 
-## Files Modified This Session
+## Key Bugs Found and Fixed
 
-| File | Changes |
-|------|---------|
-| `ghim/calibration.py` | heat/h2 fields + getter methods |
-| `ghim/data/gcam_cal.py` | heat/h2 production from FE aggregates |
-| `ghim/build.py` | Major: R32 init, subsector adjustment, pref_weight, inline recal, agriculture, buildings subsector demands, inter-period demand carry-forward |
-| `ghim/model.py` | Inline recalibration for demand + electricity sectors |
-| `ghim/sectors/abc.py` | sector_pref_weight, removed _demand_scale |
-| `ghim/sectors/buildings.py` | Independent subsector demands, calibrate_subsector_demands |
-| `ghim/sectors/industry.py` | Heat tech, _last_demand_ej, income elasticity fix |
-| `ghim/sectors/transport.py` | price_index lcot override |
-| `ghim/sectors/district_heat.py` | total_production_ej param |
-| `ghim/sectors/electricity.py` | R32 init, profit shutdown params, FOM in var_cost |
-| `ghim/core/vintage.py` | profit_shutdown_factor, profit_shutdown_params, initialize_single_vintage |
-| `ghim/tests/test_sectors.py` | EU tech count 7→8 |
-
-## Commits (cht/proj/phase-1)
-
-1. `5bbe9cf` - H2/heat/demand carrier matching
-2. `a4095ce` - Buildings independent subsector demands
-3. `31b0e69` - Industry income elasticity fix (GCAM target ref)
-4. `b3e6cca` - Endogenous industry elasticity (inter-period carry-forward)
-5. `da62d74` - Profit shutdown for electricity vintage
-6. `0b0cc06` - Profit shutdown unit conversion fix + single-vintage option
-7. `6d2c523` - R32 GCAM elec shares for vintage init + slides
-8. (pending) - FOM in variable cost for profit shutdown
-
-## Session 2 Progress (2026-03-16)
-
-### Completed
-- AR6Calibrator 완전 삭제 + CalibrationConfig 추가
-- T&D loss rate 도입 (replaces _generation_target)
-- Post-cal time extension (HOLD/DECAY mode, run_end parameter)
-- Anderson solver 구현 (full 325-dim vector, but slower than DampedSolver)
-- DampedSolver 최적화: FE_RECAL 3→2, 78s→51s
-- Region-specific buildings income elasticity (from GCAM trajectory)
-  - 상수 α overshoots (Gompertz saturation 미반영)
-  - calibrate_subsector_demands 유지, elasticity는 post-cal에서만 사용
-- Solver option: time_cfg={"solver": "anderson"} or "damped" (default)
-
-### Key Results
-- Calibration: 0% sectors, +0.1% FE, +1-2% elec gen, ±1pp tech mix
-- Post-cal (HOLD): GDP stable, FE 727→765, coal 24%→7%, solar 25%→48%
-- Post-cal elec share decline (37%→31%) — buildings subsector dynamics
-- Run time: 51s (26 periods, DampedSolver)
-
-### Learnings
-- 상수 income elasticity는 비선형 성장 (Gompertz) 재현 불가
-- Non-parametric demand curves (GDP/cap → demand/cap lookup) 가 satiation 잘 잡음
-- sector_pref_weight가 buildings subsector에 전달 안 되던 버그 수정 → Bld +27%→-4%
-- Anderson이 느린 이유: deepcopy overhead in template management
-- T&D loss로 _generation_target 대체 → 더 clean한 architecture
-- DECAY mode에서 FE 진동 → HOLD이 더 안정적
-
-### CRITICAL BUG (미해결): Post-cal industry electricity share 급감
-- Industry elec share: 27.7% (2100) → 14.9% (2150) — HOLD mode에서도
-- _target_svc_shares가 유지되는데 share가 바뀜 → inline recal이 작동 안 하는 것으로 추정
-- 가능한 원인:
-  1. _target_svc_shares가 post-cal에서 어딘가에서 리셋됨
-  2. carrier prices가 급변해서 inline recal의 preference_calibrate가 수치적 불안정
-  3. industry의 _last_demand_ej (inter-period carry-forward)가 income elasticity를 바꿔서 sector total이 변동 → FE 절대량 변화
-- 디버깅 필요: post-cal에서 industry EU subsector의 pref_factors/shares를 매 period 출력
+1. **R10 DEFAULT_ELEC_SHARES** → South Korea nuclear 14pp gap (R10 average ≠ R32)
+2. **Vintage investment allocation** — used GCAM effective shares as new-investment shares
+3. **Preference decay after inline recal** — calibration_year not updated → H2 drift
+4. **sector_pref_weight not reaching buildings subsectors** — override broke price channel
+5. **TFP decreasing post-cal** — calibration pass ran for post-cal with flat GDP target
+6. **Industry cobweb oscillation** — _last_demand_ej feedback loop
+7. **use_gcam_gdp NameError** — leftover from AR6 removal
 
 ## Next Steps When Resuming
 
-### Refactor (높은 우선순위)
-1. **AR6 완전 삭제** — AR6Calibrator class, ar6_cal.py, is_native_r32 분기, R5 매핑 전부 제거
-2. **Calibration 인터페이스 재설계** (유저 확정):
-   ```
-   calibrate = True (default)
-     ├── dataset 없음 → GCAM-v8.2 / SSP2-Ref / 1975-2100 / run_end=2100
-     ├── dataset 있음 + model_name/scenario 없음 → 유저에게 되물음 (error)
-     └── dataset 있음 + model_name/scenario 있음 → 해당 데이터로 calibration
-         ├── cal_start, cal_end: 데이터셋에서 자동 결정 (유저 override 가능)
-         └── run_end: default = cal_end (유저가 2150 등으로 연장 가능)
-   calibrate = False
-     └── 이전에 저장된 calibrated params 로드해서 바로 solve
-   ```
-3. **Calibrated params 저장/로드**: pref_factors, sector_pref_weight, _target_svc_shares, vintage state 등을 파일로 저장 → 재활용
-4. **DEFAULT_ELEC_SHARES 등 R10 legacy dict 삭제** — GCAM fallback으로 대체 완료
-5. R10은 trade module에서만 사용 → 유지
+### High Priority
+1. **Buildings 2025 gap (-4%)** — first-period price transient, demand curves not perfectly aligned
+2. **Industry FE oscillation** — 697-744 EJ in post-cal (damping helps but not eliminated)
+3. **CalibratedParams: load path** — pickle load → skip calibration → continue run
+4. **1975 model start** — economy init at 1975, run through historical periods
 
-### 모형 개선
-6. **Buildings subsector 독립 수요함수** (gcamdata A44 파라미터) — Phase 1 scope
-7. Hydro 자원 제약 (max generation cap)
+### Medium Priority
+5. **Anderson solver optimization** — eliminate deepcopy in template management
+6. **Buildings Gompertz per subsector** — income-dependent curves (constant α insufficient)
+7. **Hydro resource constraint** — max generation cap per region
+8. **Population extrapolation** — SSP2 population beyond 2100
+
+### Lower Priority
+9. **Calibrator parameterization** — generic dataset loader (not just GCAM-v8.2)
+10. **Legacy cleanup** — remaining R10 references in trade module
+11. **DECAY mode stabilization** — smooth pref_weight transition (exponential instead of linear)
+
+## Files Modified (Session 2)
+
+| File | Key Changes |
+|------|-------------|
+| `ghim/calibration.py` | CalibrationConfig, PostCalMode, make_calibrator, save/load |
+| `ghim/data/ar6_cal.py` | DELETED |
+| `ghim/data/gcam_cal.py` | bld_sub_demand_curves, bld_sub_income_elas, elec_td_loss |
+| `ghim/data/energy_cal.py` | Removed DEFAULT_ELEC_SHARES/TOTAL/FINAL_DEMAND |
+| `ghim/build.py` | AR6 removal, time_cfg, cal_end guard, TFP extrapolation, post-cal GDP release |
+| `ghim/model.py` | calibration_year fix in inline recal, T&D loss in step 4 |
+| `ghim/sectors/buildings.py` | demand curves, sector_pref_weight wiring |
+| `ghim/sectors/electricity.py` | profit shutdown params, FOM in var_cost, R32 init |
+| `ghim/core/state.py` | Extended to_vector 325 dims |
+| `ghim/core/vintage.py` | profit_shutdown, back-calculation, damped carry-forward |
+| `ghim/solver/damped.py` | AndersonSolver, FE_RECAL 3→2 |
+| `ghim/run.py` | --run-end, --post-cal-mode, --save-params, --load-params |
+
+## Commits (Session 2, cht/proj/phase-1)
+
+Latest: `c64892226` — Add GHIM sector lines to FE by Sector chart

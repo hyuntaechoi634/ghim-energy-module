@@ -873,7 +873,7 @@ LFP & regional & Labor & ILO 2020 workforce fraction \\
   % Multi-use → Elec Gen (cross-link, faint)
   \begin{pgfonlayer}{background}
   \foreach \s in {p_coal, p_oil, p_gas, p_bio} {
-    \draw[yellow!50!orange, line width=0.5pt, opacity=0.4] (\s.north west) -- (tr_elec.south east);
+    \draw[yellow!70!orange, line width=0.6pt, opacity=0.7] (\s.north) -- (tr_elec.south);
   }
   \end{pgfonlayer}
   % Solid Fuel Processing
@@ -1376,7 +1376,7 @@ $P_{svc} = \sum_c s_c \cdot C_c / eff_c^{svc}$ \;{\tiny(cost/GJ-service)}\\[2pt]
   % Multi-use primaries also feed Elec Gen (cross-link)
   \begin{pgfonlayer}{background}
   \foreach \s in {p_coal, p_oil, p_gas, p_bio} {
-    \draw[yellow!50!orange, link, opacity=0.4] (\s.north west) -- (tr_elec.south east);
+    \draw[yellow!70!orange, link, opacity=0.7] (\s.north) -- (tr_elec.south);
   }
   % Electrolysis: Electricity → H2 Production
   \draw[-{Stealth[length=3pt]}, blue!50, bypass] (c_elec.east)

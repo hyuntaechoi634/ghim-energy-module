@@ -784,26 +784,26 @@ LFP & regional & Labor & ILO 2020 workforce fraction \\
   scale=0.78, transform shape,
 ]
   % ── Row 1: Sectors (y=0) ─────────────────────────────────────
-  \node[sbox, fill=blue!12, draw=blue!60, minimum width=3.2cm, font=\small\bfseries] (ind) at (1.6,0) {Industry};
-  \node[sbox, fill=purple!12, draw=purple!60, minimum width=3.2cm, font=\small\bfseries] (bld) at (5.0,0) {Buildings};
-  \node[sbox, fill=green!10, draw=green!50!black, minimum width=3.2cm, font=\small\bfseries] (trn) at (8.4,0) {Transport};
-  \node[sbox, fill=teal!10, draw=teal!50, minimum width=3.2cm, font=\small\bfseries] (agr) at (11.8,0) {Agriculture};
-  \node[sbox, fill=gray!10, draw=gray!50, minimum width=3.2cm, font=\small\bfseries] (bnk) at (15.2,0) {Bunkers};
+  \node[sbox, fill=blue!12, draw=blue!60, minimum width=2.4cm, font=\small\bfseries] (ind) at (0.8,0) {Industry};
+  \node[sbox, fill=purple!12, draw=purple!60, minimum width=2.4cm, font=\small\bfseries] (bld) at (3.4,0) {Buildings};
+  \node[sbox, fill=green!10, draw=green!50!black, minimum width=2.4cm, font=\small\bfseries] (trn) at (6.0,0) {Transport};
+  \node[sbox, fill=teal!10, draw=teal!50, minimum width=2.4cm, font=\small\bfseries] (agr) at (8.6,0) {Agriculture};
+  \node[sbox, fill=gray!10, draw=gray!50, minimum width=2.4cm, font=\small\bfseries] (bnk) at (11.2,0) {Bunkers};
 
   % ── Row 2: Subsectors (y=-1.3) ──────────────────────────────
   % Industry
-  \node[ssbox, fill=blue!5, draw=blue!25, minimum width=1.3cm] (euse) at (0.8,-1.3) {Energy Use};
-  \node[ssbox, fill=orange!5, draw=orange!25, minimum width=1.3cm] (fs) at (2.4,-1.3) {Feedstocks};
+  \node[ssbox, fill=blue!5, draw=blue!25, minimum width=1.2cm] (euse) at (0.1,-1.3) {Energy Use};
+  \node[ssbox, fill=orange!5, draw=orange!25, minimum width=1.2cm] (fs) at (1.5,-1.3) {Feedstocks};
   % Buildings
-  \node[ssbox, fill=purple!5, draw=purple!25, minimum width=1.3cm] (res) at (4.2,-1.3) {Residential};
-  \node[ssbox, fill=purple!5, draw=purple!25, minimum width=1.3cm] (com) at (5.8,-1.3) {Commercial};
+  \node[ssbox, fill=purple!5, draw=purple!25, minimum width=1.2cm] (res) at (2.8,-1.3) {Residential};
+  \node[ssbox, fill=purple!5, draw=purple!25, minimum width=1.2cm] (com) at (4.0,-1.3) {Commercial};
   % Transport
-  \node[ssbox, fill=green!5, draw=green!25, minimum width=1.3cm] (pas) at (7.6,-1.3) {Passenger};
-  \node[ssbox, fill=green!5, draw=green!25, minimum width=1.3cm] (frt) at (9.2,-1.3) {Freight};
+  \node[ssbox, fill=green!5, draw=green!25, minimum width=1.2cm] (pas) at (5.3,-1.3) {Passenger};
+  \node[ssbox, fill=green!5, draw=green!25, minimum width=1.2cm] (frt) at (6.7,-1.3) {Freight};
   % Agriculture: no subsectors
   % Bunkers
-  \node[ssbox, fill=gray!5, draw=gray!25, minimum width=1.5cm, font=\tiny\bfseries] (bavia) at (14.2,-1.3) {Intl. Aviation};
-  \node[ssbox, fill=gray!5, draw=gray!25, minimum width=1.5cm, font=\tiny\bfseries] (bship) at (16.2,-1.3) {Intl. Shipping};
+  \node[ssbox, fill=gray!5, draw=gray!25, minimum width=1.2cm, font=\tiny\bfseries] (bavia) at (10.5,-1.3) {Intl. Aviation};
+  \node[ssbox, fill=gray!5, draw=gray!25, minimum width=1.2cm, font=\tiny\bfseries] (bship) at (11.9,-1.3) {Intl. Shipping};
 
   % ── Tree lines: Sector → Subsectors ─────────────────────────
   \foreach \s in {euse, fs} { \draw[tree] (ind.south) -- (\s.north); }
@@ -813,15 +813,15 @@ LFP & regional & Labor & ILO 2020 workforce fraction \\
 
   % ── Row 3: End Uses (y=-2.4) ─────────────────────────────────
   % Buildings end uses (shared by Residential & Commercial)
-  \node[tbox] (eu_heat) at (4.2,-2.4) {Heating};
-  \node[tbox] (eu_cool) at (5.4,-2.4) {Cooling};
-  \node[tbox] (eu_oth)  at (6.5,-2.4) {Other};
+  \node[tbox] (eu_heat) at (2.8,-2.4) {Heating};
+  \node[tbox] (eu_cool) at (3.7,-2.4) {Cooling};
+  \node[tbox] (eu_oth)  at (4.6,-2.4) {Other};
   % Tree lines: both subsectors → same 3 end uses
   \foreach \s in {eu_heat, eu_cool, eu_oth} { \draw[tree] (res.south) -- (\s.north); }
   \foreach \s in {eu_heat, eu_cool, eu_oth} { \draw[tree] (com.south) -- (\s.north); }
 
   % ── Row 4: Carriers (y=-3.8) — aligned with transformation ──
-  \def\cs{2.0}  % carrier/trans spacing
+  \def\cs{1.8}  % carrier/trans spacing
   \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_elec) at (0,-3.8)       {Electricity};
   \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_sol)  at (\cs*1,-3.8)   {Solids};
   \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.2cm] (c_liq)  at (\cs*2,-3.8)   {Refined Oil};
@@ -851,11 +851,11 @@ LFP & regional & Labor & ILO 2020 workforce fraction \\
 
   % ── Row 6: Primary (y=-6.4) ────────────────────────────────
   % Left group: elec-only (under Elec Gen)
-  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_sol)  at (-0.7,-6.3) {Solar};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_wind) at (0,-6.3)    {Wind};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_hyd)  at (0.7,-6.3)  {Hydro};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_u)    at (-0.4,-7.0) {Uranium};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=1.0cm, font=\tiny\bfseries] (p_geo)  at (0.5,-7.0)  {Geothermal};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_sol)  at (-1.05,-6.3) {Solar};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_wind) at (0,-6.3)     {Wind};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_hyd)  at (1.05,-6.3) {Hydro};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_u)    at (-0.55,-7.0) {Uranium};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=1.0cm, font=\tiny\bfseries] (p_geo)  at (0.55,-7.0)  {Geothermal};
   \begin{pgfonlayer}{background}
     \node[rounded corners=3pt, draw=green!25, fill=green!3, line width=0.4pt,
           fit=(p_sol)(p_wind)(p_hyd)(p_u)(p_geo), inner sep=3pt] (epg) {};

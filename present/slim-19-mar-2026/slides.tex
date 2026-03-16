@@ -237,7 +237,7 @@ Integrated Assessment Modeling Group, KAIST}
 \begin{frame}{General Model Structure by Phase}
 \centering
 \footnotesize
-\begin{tabular}{l p{5.8cm} p{5.8cm}}
+\begin{tabular}{l p{4.8cm} p{4.8cm}}
 \toprule
 \textbf{Component} & \textbf{Phase 1} & \textbf{Phase 2} \\
 \midrule
@@ -1861,13 +1861,13 @@ Coupling      & One-way coupling with Land              & Two-way with multiple 
 \begin{tcolorbox}[enhanced, colback=gray!3, colframe=gray!50, top=4pt, bottom=4pt, fonttitle=\small\bfseries, title=4-Level Nested CES Production Function]
 \footnotesize
 \begin{tabular}{@{}llll@{}}
-\textbf{Level 1} & $\mathrm{KL} = \mathrm{CES}(K,\, L;\; \sigma_{KL}\!=\!0.8)$
-  & & Capital--Labor \\[3pt]
+\textbf{Level 1} & $\mathrm{KL} = A \cdot \mathrm{CES}(K,\, L;\; \sigma_{KL}\!=\!0.8)$
+  & & Capital--Labor \quad ($A$ = productivity) \\[3pt]
 \textbf{Level 2} & $E_{\mathrm{val}} = \mathrm{CES}(E_{\mathrm{EL}},\, E_{\mathrm{NEL}};\; \sigma_{E}\!=\!2.0)$
   & & Electricity--Non-elec \\[3pt]
-\textbf{Level 3} & $\mathrm{KLE} = A_{\mathrm{KLE}} \cdot \mathrm{CES}(\mathrm{VA},\, E_{\mathrm{val}};\; \sigma_{KLE}\!=\!0.4)$
+\textbf{Level 3} & $\mathrm{KLE} = \varphi_{\mathrm{KLE}} \cdot \mathrm{CES}(\mathrm{VA},\, E_{\mathrm{val}};\; \sigma_{KLE}\!=\!0.4)$
   & & Value-added--Energy \\[3pt]
-\textbf{Level 4} & $Q = A_{\mathrm{KLEM}} \cdot \mathrm{CES}(\mathrm{KLE},\, M;\; \sigma_{KLEM}\!=\!0.2)$
+\textbf{Level 4} & $Q = \varphi_{\mathrm{KLEM}} \cdot \mathrm{CES}(\mathrm{KLE},\, M;\; \sigma_{KLEM}\!=\!0.2)$
   & & Gross output \\
 \end{tabular}
 \end{tcolorbox}
@@ -1890,16 +1890,16 @@ All other nests: inputs already in value terms (billion \$), so $p_i\!\cdot\! X_
 \end{frame}
 
 % ── (2/5) Scale Factors ──────────────────────────────────────────
-\begin{frame}[t]{Formal Calibration (2/4): Scale Factors $A$}
+\begin{frame}[t]{Formal Calibration (2/4): Normalization Constants $\varphi$}
 \vspace{-0.3em}
 
-\begin{tcolorbox}[infobox, colback=blue!6, colframe=blue!60, top=4pt, bottom=4pt, title={Scale Factors (base year, time-invariant)}]
+\begin{tcolorbox}[infobox, colback=blue!6, colframe=blue!60, top=4pt, bottom=4pt, title={Normalization Constants $\varphi$ (base year, time-invariant)}]
 \footnotesize
-Each nest gets a scale factor so CES output matches observed values:
+Each nest gets a constant so CES output matches observed base-year values:
 \begin{align*}
-A_{\mathrm{KLE}} &= \mathrm{KLE}_0 \;/\; \mathrm{CES}(\mathrm{VA}_0,\, E_{\mathrm{val},0})
+\varphi_{\mathrm{KLE}} &= \mathrm{KLE}_0 \;/\; \mathrm{CES}(\mathrm{VA}_0,\, E_{\mathrm{val},0})
   & \text{where } \mathrm{KLE}_0 &= \mathrm{GDP}_0 + p_E \!\cdot\! E_0 \\[4pt]
-A_{\mathrm{KLEM}} &= Q_0 \;/\; \mathrm{CES}(\mathrm{KLE}_0,\, M_0)
+\varphi_{\mathrm{KLEM}} &= Q_0 \;/\; \mathrm{CES}(\mathrm{KLE}_0,\, M_0)
   & \text{where } Q_0 &= \frac{\mathrm{GDP}_0 + p_E \!\cdot\! E_0}{1 - m}
 \end{align*}
 \end{tcolorbox}
@@ -1909,7 +1909,7 @@ A_{\mathrm{KLEM}} &= Q_0 \;/\; \mathrm{CES}(\mathrm{KLE}_0,\, M_0)
 \footnotesize
 \begin{itemize}[nosep,leftmargin=*,itemsep=4pt]
 \item $E_{\mathrm{val},0} = p_E \!\cdot\! E_0$: energy expenditure ($p_E$ = expenditure-weighted avg of carrier prices, currently global)
-\item $\mathrm{VA}_0 = \mathrm{GDP}_0 = r\!\cdot\! K + w\!\cdot\! L$: factor income, enforced by TFP calibration
+\item $\mathrm{VA}_0 = \mathrm{GDP}_0 = r\!\cdot\! K + w\!\cdot\! L$: factor income, enforced by $A$ calibration
 \item $\mathrm{KLE}_0 = \mathrm{GDP}_0 + E_{\mathrm{val},0}$: value-added \textbf{plus} energy cost
 \item $M_0 = m \cdot Q_0$,\quad $Q_0 = \mathrm{KLE}_0 \,/\, (1\!-\!m)$\quad ($m = 0.45$, materials share)
 \end{itemize}
@@ -1918,21 +1918,21 @@ A_{\mathrm{KLEM}} &= Q_0 \;/\; \mathrm{CES}(\mathrm{KLE}_0,\, M_0)
 \end{frame}
 
 % ── (3/5) Base-Year TFP ──────────────────────────────────────────
-\begin{frame}[t]{Formal Calibration (3/4): Base-Year TFP}
+\begin{frame}[t]{Formal Calibration (3/4): Base-Year Productivity $A_0$}
 \vspace{-0.3em}
 
-\begin{tcolorbox}[infobox, colback=orange!6, colframe=orange!70!black, top=4pt, bottom=4pt, title={Base-Year TFP$_0$ (iterative calibration)}]
+\begin{tcolorbox}[infobox, colback=orange!6, colframe=orange!70!black, top=4pt, bottom=4pt, title={Base-Year Productivity $A_0$ (iterative calibration)}]
 \footnotesize
-Find $\mathrm{TFP}_0$ such that $\mathrm{GDP} = Q - p_E\!\cdot\! E - m\!\cdot\! Q = \mathrm{GDP}_0$:
+Find $A_0$ such that $\mathrm{GDP} = Q - p_E\!\cdot\! E - m\!\cdot\! Q = \mathrm{GDP}_0$:
 
 \begin{align*}
-&\text{Initial guess: } \mathrm{TFP} = \mathrm{GDP}_0 \,/\, \mathrm{CES}_{KL}(K_0,\, L_0) \\[6pt]
+&\text{Initial guess: } A = \mathrm{GDP}_0 \,/\, \mathrm{CES}_{KL}(K_0,\, L_0) \\[6pt]
 &\textbf{repeat:} \\
-&\quad \mathrm{VA} = \mathrm{TFP} \cdot \mathrm{CES}_{KL}(K_0,\, L_0) \\
+&\quad \mathrm{VA} = A \cdot \mathrm{CES}_{KL}(K_0,\, L_0) \\
 &\quad E = E_0 \cdot \mathrm{VA}\,/\,\mathrm{VA}_0
   \qquad\text{\small(price ratio = 1 at base year)} \\
 &\quad \mathrm{GDP}_{\mathrm{out}} = Q(\mathrm{VA},\, E) - p_E\!\cdot\! E - m\!\cdot\! Q \\
-&\quad \mathrm{TFP} \leftarrow \mathrm{TFP} \times \mathrm{GDP}_0 \,/\, \mathrm{GDP}_{\mathrm{out}} \\[4pt]
+&\quad A \leftarrow A \times \mathrm{GDP}_0 \,/\, \mathrm{GDP}_{\mathrm{out}} \\[4pt]
 &\textbf{until } |\mathrm{GDP}_{\mathrm{out}} - \mathrm{GDP}_0| \,/\, \mathrm{GDP}_0 < 10^{-10}
 \end{align*}
 \end{tcolorbox}
@@ -1943,30 +1943,30 @@ Find $\mathrm{TFP}_0$ such that $\mathrm{GDP} = Q - p_E\!\cdot\! E - m\!\cdot\! 
 \begin{itemize}[nosep,leftmargin=*,itemsep=4pt]
 \item Converges in 3--5 iterations (Newton-like ratio correction)
 \item At base year, energy price $= p_{E,0}$, so $E \propto \mathrm{VA}$ (no price effect)
-\item TFP$_0$ ensures the full chain KL $\!\to\!$ KLE $\!\to\!$ Q $\!\to\!$ GDP reproduces GDP$_0$ exactly
+\item $A_0$ ensures the full chain KL $\!\to\!$ KLE $\!\to\!$ Q $\!\to\!$ GDP reproduces GDP$_0$ exactly
 \end{itemize}
 \end{tcolorbox}
 
 \end{frame}
 
 % ── (4/5) Future TFP Trajectory ──────────────────────────────────
-\begin{frame}[t]{Formal Calibration (4/4): Future TFP Trajectory}
+\begin{frame}[t]{Formal Calibration (4/4): Future Productivity $A(t)$}
 \vspace{-0.3em}
 
-\begin{tcolorbox}[infobox, colback=orange!6, colframe=orange!70!black, top=4pt, bottom=4pt, title={TFP$(t)$ via Bisection (every 5-year period)}]
+\begin{tcolorbox}[infobox, colback=orange!6, colframe=orange!70!black, top=4pt, bottom=4pt, title={$A(t)$ via Bisection (every 5-year period)}]
 \footnotesize
 Given: $K(t)$ from capital accumulation, $L(t)$ from SSP population,
 $p_E(t)$ from calibration pass.
 
 \begin{align*}
-\mathrm{VA}(t) &= \mathrm{TFP}(t) \cdot \mathrm{CES}_{KL}\!\big(K(t),\, L(t)\big) \\[4pt]
+\mathrm{VA}(t) &= A(t) \cdot \mathrm{CES}_{KL}\!\big(K(t),\, L(t)\big) \\[4pt]
 E(t) &= E_0 \cdot \frac{\mathrm{VA}(t)}{\mathrm{VA}_0} \cdot \left(\frac{p_E(t)}{p_{E,0}}\right)^{\!-\sigma_{KLE}}
   \qquad\text{\small(CES first-order condition)} \\[4pt]
 \mathrm{GDP}(t) &= Q\!\big(\mathrm{VA}(t),\, E(t)\big) - p_E(t)\!\cdot\! E(t) - m\!\cdot\! Q
 \end{align*}
 
 \vspace{-0.5em}
-Bisect TFP$(t)$ until $\mathrm{GDP}(t) = \mathrm{GDP}_{\mathrm{SSP}}(t)$
+Bisect $A(t)$ until $\mathrm{GDP}(t) = \mathrm{GDP}_{\mathrm{SSP}}(t)$
 \quad(80 iterations, tol $< 10^{-10}$).
 \end{tcolorbox}
 

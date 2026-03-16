@@ -821,8 +821,7 @@ LFP & regional & Labor & ILO 2020 workforce fraction \\
   \foreach \s in {eu_heat, eu_cool, eu_oth} { \draw[tree] (com.south) -- (\s.north); }
 
   % ── Row 4: Carriers (y=-3.8) — aligned with transformation ──
-  % Spacing: 1.8 interval, 8 boxes starting at x=0
-  \def\cs{1.8}  % carrier/trans spacing
+  \def\cs{2.0}  % carrier/trans spacing
   \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_elec) at (0,-3.8)       {Electricity};
   \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_sol)  at (\cs*1,-3.8)   {Solids};
   \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.2cm] (c_liq)  at (\cs*2,-3.8)   {Refined Oil};

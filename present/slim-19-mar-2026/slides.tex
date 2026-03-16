@@ -867,33 +867,31 @@ LFP & regional & Labor & ILO 2020 workforce fraction \\
   \node[sbox, fill=green!8, draw=green!40, minimum width=1.0cm] (p_bio) at (\cs*5.7,-6.4) {Biomass};
 
   % ── Links ──────────────────────────────────────────────────
-  % ── Curved arcs: multiple primaries → transformation (logit competition) ──
-  % Elec Gen: all primaries (elec-only group + fossil/biomass)
+  % Elec-only primaries → Elec Gen → Electricity
   \draw[yellow!70!orange, line width=0.8pt] (epg.north) -- (tr_elec.south);
   \draw[yellow!70!orange, line width=0.8pt] (tr_elec.north) -- (c_elec.south);
+  % Multi-use → Elec Gen (cross-link, faint)
   \begin{pgfonlayer}{background}
-  \draw[yellow!70!orange, line width=0.6pt, opacity=0.7] (p_coal.north) to[bend right=15] (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.6pt, opacity=0.7] (p_oil.north) to[bend right=12] (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.6pt, opacity=0.7] (p_gas.north) to[bend right=8] (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.6pt, opacity=0.7] (p_bio.north) to[bend left=10] (tr_elec.south);
+  \foreach \s in {p_coal, p_oil, p_gas, p_bio} {
+    \draw[yellow!70!orange, line width=0.6pt, opacity=0.7] (\s.north) -- (tr_elec.south);
+  }
   \end{pgfonlayer}
-  % Solid Fuel Processing (1:1)
+  % Solid Fuel Processing
   \draw[gray!60, line width=0.6pt] (p_coal.north) -- (tr_sfp.south);
   \draw[gray!60, line width=0.6pt] (tr_sfp.north) -- (c_sol.south);
-  % Oil Refining (1:1)
+  % Oil Refining
   \draw[red!60!black, line width=0.6pt] (p_oil.north) -- (tr_ref.south);
   \draw[red!60!black, line width=0.6pt] (tr_ref.north) -- (c_liq.south);
-  % Gas Processing (1:1)
+  % Gas Processing
   \draw[cyan!60!blue, line width=0.6pt] (p_gas.north) -- (tr_gasp.south);
   \draw[cyan!60!blue, line width=0.6pt] (tr_gasp.north) -- (c_gas.south);
-  % H2 Production (gas + biomass, curved)
-  \draw[blue!60, line width=0.6pt] (p_gas.north) to[bend left=10] (tr_h2.south);
-  \draw[blue!60, line width=0.6pt] (p_bio.north) to[bend right=8] (tr_h2.south);
+  % H2 Production
+  \draw[blue!60, line width=0.6pt] (p_gas.north) -- (tr_h2.south);
   \draw[blue!60, line width=0.6pt] (tr_h2.north) -- (c_h2.south);
-  % District Heating (coal, gas, biomass, curved)
-  \draw[pink!70!red, line width=0.6pt] (p_coal.north) to[bend left=12] (tr_dh.south);
-  \draw[pink!70!red, line width=0.6pt] (p_gas.north) to[bend left=8] (tr_dh.south);
-  \draw[pink!70!red, line width=0.6pt] (p_bio.north) to[bend right=10] (tr_dh.south);
+  % District Heating
+  \foreach \s in {p_coal, p_gas, p_bio} {
+    \draw[pink!70!red, line width=0.6pt] (\s.north) -- (tr_dh.south);
+  }
   \draw[pink!70!red, line width=0.6pt] (tr_dh.north) -- (c_heat.south);
   % Biorefining
   \draw[green!60!black, line width=0.6pt] (p_bio.north) -- (tr_bio.south);
@@ -1360,28 +1358,26 @@ $P_{svc} = \sum_c s_c \cdot C_c / eff_c^{svc}$ \;{\tiny(cost/GJ-service)}\\[2pt]
   % Solid Fuel Processing
   \draw[gray!60, link] (p_coal.north) -- (tr_sfp.south);
   \draw[gray!60, link] (tr_sfp.north) -- (c_sol.south);
-  % District Heating (coal, gas, biomass → heat, curved arcs)
-  \draw[pink!70!red, link] (p_coal.north) to[bend left=12] (tr_dh.south);
-  \draw[pink!70!red, link] (p_gas.north) to[bend left=8] (tr_dh.south);
-  \draw[pink!70!red, link] (p_bio.north) to[bend right=10] (tr_dh.south);
+  % District Heating (coal, oil, gas, biomass → heat)
+  \foreach \s in {p_coal, p_gas, p_bio} {
+    \draw[pink!70!red, link] (\s.north) -- (tr_dh.south);
+  }
   \draw[pink!70!red, link] (tr_dh.north) -- (c_heat.south);
-  % H2 Production (gas + biomass → H2, curved arcs)
-  \draw[blue!60, link] (p_gas.north) to[bend left=10] (tr_h2.south);
-  \draw[blue!60, link] (p_bio.north) to[bend right=8] (tr_h2.south);
+  % H2 Production (gas, biomass → H2)
+  \draw[blue!60, link] (p_gas.north) -- (tr_h2.south);
   \draw[blue!60, link] (tr_h2.north) -- (c_h2.south);
-  % Biorefining (biomass → biofuel, 1:1)
+  % Biorefining (biomass → biofuel)
   \draw[green!60!black, link] (p_bio.north) -- (tr_bio.south);
   \draw[green!60!black, link] (tr_bio.north) -- (c_biof.south);
-  % Biomass Processing (biomass → biomass carrier, 1:1)
+  % Biomass Processing (biomass → biomass carrier)
   \draw[green!50!black, link] (p_bio.north) -- (tr_bmp.south);
   \draw[green!50!black, link] (tr_bmp.north) -- (c_bio.south);
 
-  % Multi-use primaries → Elec Gen (curved arcs, logit competition)
+  % Multi-use primaries also feed Elec Gen (cross-link)
   \begin{pgfonlayer}{background}
-  \draw[yellow!70!orange, link, opacity=0.7] (p_coal.north) to[bend right=15] (tr_elec.south);
-  \draw[yellow!70!orange, link, opacity=0.7] (p_oil.north) to[bend right=12] (tr_elec.south);
-  \draw[yellow!70!orange, link, opacity=0.7] (p_gas.north) to[bend right=8] (tr_elec.south);
-  \draw[yellow!70!orange, link, opacity=0.7] (p_bio.north) to[bend left=10] (tr_elec.south);
+  \foreach \s in {p_coal, p_oil, p_gas, p_bio} {
+    \draw[yellow!70!orange, link, opacity=0.7] (\s.north) -- (tr_elec.south);
+  }
   % Electrolysis: Electricity → H2 Production
   \draw[-{Stealth[length=3pt]}, blue!50, bypass] (c_elec.east)
     -- ++(0.5,0) |- (tr_h2.west);

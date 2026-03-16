@@ -820,79 +820,99 @@ LFP & regional & Labor & ILO 2020 workforce fraction \\
   \foreach \s in {eu_heat, eu_cool, eu_oth} { \draw[tree] (res.south) -- (\s.north); }
   \foreach \s in {eu_heat, eu_cool, eu_oth} { \draw[tree] (com.south) -- (\s.north); }
 
-  % ── Row 4: Carriers (y=-3.8) — 8 items, full width ──────────
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_elec) at (0.5,-3.8)  {Electricity};
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_liq)  at (2.6,-3.8)  {Liquids};
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_gas)  at (4.6,-3.8)  {Gas};
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_heat) at (6.7,-3.8)  {Heat};
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_sol)  at (8.8,-3.8)  {Solids};
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_h2)   at (10.9,-3.8) {H$_2$};
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_biof) at (13.0,-3.8) {Biofuel};
-  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.3cm] (c_bio)  at (15.1,-3.8) {Biomass};
+  % ── Row 4: Carriers (y=-3.8) — aligned with transformation ──
+  % Spacing: 1.8 interval, 8 boxes starting at x=0
+  \def\cs{1.8}  % carrier/trans spacing
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_elec) at (0,-3.8)       {Electricity};
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_sol)  at (\cs*1,-3.8)   {Solids};
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.2cm] (c_liq)  at (\cs*2,-3.8)   {Refined Oil};
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_gas)  at (\cs*3,-3.8)   {Gas};
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_h2)   at (\cs*4,-3.8)   {H$_2$};
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_heat) at (\cs*5,-3.8)   {Heat};
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_biof) at (\cs*6,-3.8)   {Biofuel};
+  \node[sbox, fill=violet!8, draw=violet!40, minimum width=1.1cm] (c_bio)  at (\cs*7,-3.8)   {Biomass};
 
-  % ── Row 5: Transformation (y=-5.2) — 5 items ───────────────
-  \node[sbox, fill=orange!15, draw=orange!60, minimum width=2.5cm] (tr_elec) at (1.5,-5.2)  {Elec.\ Generation};
-  \node[sbox, fill=orange!15, draw=orange!60, minimum width=2.5cm] (tr_ref)  at (4.8,-5.2)  {Oil Refining};
-  \node[sbox, fill=orange!15, draw=orange!60, minimum width=2.5cm] (tr_dh)   at (8.0,-5.2)  {District Heating};
-  \node[sbox, fill=orange!15, draw=orange!60, minimum width=2.5cm] (tr_bio)  at (11.2,-5.2) {Biorefining};
-  \node[sbox, fill=orange!15, draw=orange!60, minimum width=2.5cm] (tr_h2)   at (14.5,-5.2) {H$_2$ Production};
+  % ── Row 5: Transformation (y=-5.0) — 8 items, uniform spacing ──
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_elec) at (0,-5.0) {Electricity\\[-1pt]Generation};
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_sfp)  at (\cs*1,-5.0) {Solid Fuel\\[-1pt]Processing};
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_ref)  at (\cs*2,-5.0) {Oil\\[-1pt]Refining};
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_gasp) at (\cs*3,-5.0) {Gas\\[-1pt]Processing};
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_h2)   at (\cs*4,-5.0) {H$_2$\\[-1pt]Production};
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_dh)   at (\cs*5,-5.0) {District\\[-1pt]Heating};
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_bio)  at (\cs*6,-5.0) {Biorefining};
+  \node[sbox, fill=orange!12, draw=orange!50, minimum width=1.4cm, font=\scriptsize\bfseries]
+    (tr_bmp)  at (\cs*7,-5.0) {Biomass\\[-1pt]Processing};
 
-  % ── Row 6: Primary (y=-6.6) — 9 items, full width ──────────
-  \node[sbox, fill=red!8, draw=red!40, minimum width=1.2cm] (p_coal)    at (0.5,-6.6)  {Coal};
-  \node[sbox, fill=red!8, draw=red!40, minimum width=1.2cm] (p_oil)     at (2.3,-6.6)  {Oil};
-  \node[sbox, fill=red!8, draw=red!40, minimum width=1.2cm] (p_gas)     at (4.1,-6.6)  {Gas};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_u)   at (5.9,-6.6)  {Uranium};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_bio) at (7.7,-6.6)  {Biomass};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_wind)at (9.5,-6.6)  {Wind};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_sol) at (11.3,-6.6) {Solar};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_hyd) at (13.1,-6.6) {Hydro};
-  \node[sbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_geo) at (15.1,-6.6) {Geothermal};
-
-  % ── Colored lines by carrier ──────────────────────────────────
-  % Yellow = Electricity chain
-  \draw[yellow!70!orange, line width=0.7pt] (p_coal.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (p_gas.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (p_oil.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (p_u.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (p_wind.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (p_sol.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (p_hyd.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (p_geo.north) -- (tr_elec.south);
-  \draw[yellow!70!orange, line width=0.7pt] (tr_elec.north) -- (c_elec.south);
-  % Red = Liquids chain
-  \draw[red!70!black, line width=0.7pt] (p_oil.north) -- (tr_ref.south);
-  \draw[red!70!black, line width=0.7pt] (tr_ref.north) -- (c_liq.south);
-  % Magenta = District Heating chain
-  \draw[pink!70!red, line width=0.7pt] (p_gas.north) -- (tr_dh.south);
-  \draw[pink!70!red, line width=0.7pt] (p_coal.north) -- (tr_dh.south);
-  \draw[pink!70!red, line width=0.7pt] (p_oil.north) -- (tr_dh.south);
-  \draw[pink!70!red, line width=0.7pt] (p_bio.north) -- (tr_dh.south);
-  \draw[pink!70!red, line width=0.7pt] (tr_dh.north) -- (c_heat.south);
-  % Green = Biofuel chain
-  \draw[green!60!black, line width=0.7pt] (p_bio.north) -- (tr_bio.south);
-  \draw[green!60!black, line width=0.7pt] (tr_bio.north) -- (c_biof.south);
-  % Blue = H2 chain
-  \draw[blue!60, line width=0.7pt] (p_gas.north) -- (tr_h2.south);
-  \draw[blue!60, line width=0.7pt] (tr_h2.north) -- (c_h2.south);
-  % ── Bypass lines (behind nodes) ──
+  % ── Row 6: Primary (y=-6.4) ────────────────────────────────
+  % Left group: elec-only (under Elec Gen)
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_sol)  at (-0.7,-6.3) {Solar};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_wind) at (0,-6.3)    {Wind};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_hyd)  at (0.7,-6.3)  {Hydro};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=0.8cm, font=\tiny\bfseries] (p_u)    at (-0.4,-7.0) {Uranium};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=1.0cm, font=\tiny\bfseries] (p_geo)  at (0.5,-7.0)  {Geothermal};
   \begin{pgfonlayer}{background}
-  % Blue dashed = Electrolysis (Elec → H2 Prod)
-  \draw[-{Stealth[length=3pt]}, blue!50, line width=0.7pt, dashed] (c_elec.south) to[bend right=12] (tr_h2.west);
-  % Cyan = Gas bypass
-  \draw[cyan!70!blue, line width=0.7pt, dashed] (p_gas.north) -- (c_gas.south);
-  % Gray = Solids bypass
-  \draw[gray!50, line width=0.7pt, dashed] (p_coal.north) -- (c_sol.south);
-  % Green = Biomass bypass
-  \draw[green!50!black, line width=0.7pt, dashed] (p_bio.north) -- (c_bio.south);
+    \node[rounded corners=3pt, draw=green!25, fill=green!3, line width=0.4pt,
+          fit=(p_sol)(p_wind)(p_hyd)(p_u)(p_geo), inner sep=3pt] (epg) {};
+  \end{pgfonlayer}
+  % Right group: multi-use primaries
+  \node[sbox, fill=red!8, draw=red!40, minimum width=1.0cm] (p_coal) at (\cs*1.5,-6.4) {Coal};
+  \node[sbox, fill=red!8, draw=red!40, minimum width=1.0cm] (p_oil)  at (\cs*2.5,-6.4) {Oil};
+  \node[sbox, fill=red!8, draw=red!40, minimum width=1.0cm] (p_gas)  at (\cs*3.5,-6.4) {Gas};
+  \node[sbox, fill=green!8, draw=green!40, minimum width=1.0cm] (p_bio) at (\cs*5.5,-6.4) {Biomass};
+
+  % ── Links ──────────────────────────────────────────────────
+  % Elec-only primaries → Elec Gen → Electricity
+  \draw[yellow!70!orange, line width=0.8pt] (epg.north) -- (tr_elec.south);
+  \draw[yellow!70!orange, line width=0.8pt] (tr_elec.north) -- (c_elec.south);
+  % Multi-use → Elec Gen (cross-link, faint)
+  \begin{pgfonlayer}{background}
+  \foreach \s in {p_coal, p_oil, p_gas, p_bio} {
+    \draw[yellow!50!orange, line width=0.5pt, opacity=0.4] (\s.north west) -- (tr_elec.south east);
+  }
+  \end{pgfonlayer}
+  % Solid Fuel Processing
+  \draw[gray!60, line width=0.6pt] (p_coal.north) -- (tr_sfp.south);
+  \draw[gray!60, line width=0.6pt] (tr_sfp.north) -- (c_sol.south);
+  % Oil Refining
+  \draw[red!60!black, line width=0.6pt] (p_oil.north) -- (tr_ref.south);
+  \draw[red!60!black, line width=0.6pt] (tr_ref.north) -- (c_liq.south);
+  % Gas Processing
+  \draw[cyan!60!blue, line width=0.6pt] (p_gas.north) -- (tr_gasp.south);
+  \draw[cyan!60!blue, line width=0.6pt] (tr_gasp.north) -- (c_gas.south);
+  % H2 Production
+  \draw[blue!60, line width=0.6pt] (p_gas.north) -- (tr_h2.south);
+  \draw[blue!60, line width=0.6pt] (tr_h2.north) -- (c_h2.south);
+  % District Heating
+  \foreach \s in {p_coal, p_gas, p_bio} {
+    \draw[pink!70!red, line width=0.6pt] (\s.north) -- (tr_dh.south);
+  }
+  \draw[pink!70!red, line width=0.6pt] (tr_dh.north) -- (c_heat.south);
+  % Biorefining
+  \draw[green!60!black, line width=0.6pt] (p_bio.north) -- (tr_bio.south);
+  \draw[green!60!black, line width=0.6pt] (tr_bio.north) -- (c_biof.south);
+  % Biomass Processing
+  \draw[green!50!black, line width=0.6pt] (p_bio.north) -- (tr_bmp.south);
+  \draw[green!50!black, line width=0.6pt] (tr_bmp.north) -- (c_bio.south);
+  % Electrolysis: Electricity → H2
+  \begin{pgfonlayer}{background}
+  \draw[-{Stealth[length=3pt]}, blue!50, line width=0.5pt, dashed]
+    (c_elec.east) -- ++(0.3,0) |- (tr_h2.west);
   \end{pgfonlayer}
 
   % ── Row labels ───────────────────────────────────────────────
-  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-0.8,0) {Sectors};
-  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-0.8,-1.3) {Subsectors};
-  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-0.8,-2.4) {End Uses};
-  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-0.8,-3.8) {Carriers};
-  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-0.8,-5.2) {Transform.};
-  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-0.8,-6.6) {Primary};
+  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-1.5,0) {Sectors};
+  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-1.5,-1.3) {Subsectors};
+  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-1.5,-2.4) {End Uses};
+  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-1.5,-3.8) {Carriers};
+  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-1.5,-5.0) {Transformation};
+  \node[font=\scriptsize\color{TextLight}, anchor=east] at (-1.5,-6.4) {Primary};
 \end{tikzpicture}
 \end{frame}
 

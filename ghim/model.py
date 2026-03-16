@@ -168,51 +168,26 @@ class GHIMModel:
             )
 
             # Scale sector demands to CES total energy.
-            # When AR6 calibration is active, sector demands are already
-            # calibrated via _demand_scale and preference factors — use
-            # them directly (bypass CES scaling which over-inflates due
-            # to base_energy_price vs equilibrium price mismatch).
+            # When calibration is active, sector demands are already
+            # calibrated via sector_pref_weight and preference factors —
+            # use them directly. EL/NEL electrification signal is injected
+            # as a cost bias into the logit (soft coupling, not hard scaling).
             raw_sum = sum(raw_demands.values())
             calibrator = getattr(self, "calibrator", None)
-            use_ar6 = (
+            has_calibrator = (
                 calibrator is not None
                 and getattr(calibrator, "available", False)
             )
 
-            if use_ar6:
-                # AR6 path: sector demands drive energy total
+            if has_calibrator:
+                # Calibrated path: sector demands drive energy total.
+                # EL/NEL split is determined by sector logit calibration,
+                # not by KLEM CES. KLEM EL/NEL nest only affects GDP via
+                # the production function (compute_energy_demand → compute_gdp).
                 rs.final_demand = dict(raw_demands)
-                total_e = raw_sum  # use sector total for downstream
-            elif raw_sum > 0 and hasattr(region.economy, "compute_energy_split"):
-                el_price = rs.carrier_prices.get(Carrier.ELECTRICITY, 20.0)
-                # Non-electricity composite: expenditure-weighted
-                nel_exp = sum(
-                    rs.carrier_prices.get(c, 5.0) * raw_demands.get(c, 0.0)
-                    for c in raw_demands if c != "electricity"
-                )
-                nel_total = sum(
-                    v for c, v in raw_demands.items() if c != "electricity"
-                )
-                nel_price = nel_exp / nel_total if nel_total > 0 else 5.0
-
-                target_el, target_nel = region.economy.compute_energy_split(
-                    total_e, el_price, nel_price,
-                )
-
-                raw_el = raw_demands.get("electricity", 0.0)
-                raw_nel = raw_sum - raw_el
-
-                el_scale = target_el / raw_el if raw_el > 0 else 1.0
-                nel_scale = target_nel / raw_nel if raw_nel > 0 else 1.0
-
-                rs.final_demand = {}
-                for c, v in raw_demands.items():
-                    if c == "electricity":
-                        rs.final_demand[c] = v * el_scale
-                    else:
-                        rs.final_demand[c] = v * nel_scale
+                total_e = raw_sum
             else:
-                # Uniform scaling: preserves sector-level carrier shares
+                # No calibrator: uniform scaling to CES total
                 scale = total_e / raw_sum if raw_sum > 0 else 1.0
                 rs.final_demand = {c: v * scale for c, v in raw_demands.items()}
 

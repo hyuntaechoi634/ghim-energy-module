@@ -565,3 +565,58 @@ class TestTFPWithRefEnergy:
         assert d2._tfp_trajectory[last_year] == pytest.approx(
             d1._tfp_trajectory[last_year], rel=0.01,
         )
+
+
+# ---------------------------------------------------------------------------
+# EL/NEL base-year calibration
+# ---------------------------------------------------------------------------
+
+
+class TestELNELCalibration:
+    """Verify that compute_energy_split reproduces base-year shares."""
+
+    def test_base_year_reproduces_shares(self):
+        """At base prices, EL/NEL split should match base_el_fraction."""
+        el_frac = 0.35
+        d = KLEMDriver(
+            base_gdp=1000.0, base_population=100.0,
+            base_energy_demand_ej=10.0, base_energy_price=5.0,
+            base_el_fraction=el_frac, base_el_price=20.0,
+        )
+        el_ej, nel_ej = d.compute_energy_split(10.0, 20.0, d.base_nel_price)
+        assert el_ej == pytest.approx(10.0 * el_frac, rel=1e-6)
+        assert nel_ej == pytest.approx(10.0 * (1 - el_frac), rel=1e-6)
+
+    def test_lower_el_price_increases_el_share(self):
+        """Cheaper electricity → higher EL share (σ_EL_NEL=2.0)."""
+        d = KLEMDriver(
+            base_gdp=1000.0, base_population=100.0,
+            base_energy_demand_ej=10.0, base_energy_price=5.0,
+            base_el_fraction=0.20, base_el_price=20.0,
+        )
+        el_base, _ = d.compute_energy_split(10.0, 20.0, d.base_nel_price)
+        el_cheap, _ = d.compute_energy_split(10.0, 10.0, d.base_nel_price)
+        assert el_cheap > el_base, "Cheaper electricity should increase EL share"
+
+    def test_higher_el_price_decreases_el_share(self):
+        """More expensive electricity → lower EL share."""
+        d = KLEMDriver(
+            base_gdp=1000.0, base_population=100.0,
+            base_energy_demand_ej=10.0, base_energy_price=5.0,
+            base_el_fraction=0.20, base_el_price=20.0,
+        )
+        el_base, _ = d.compute_energy_split(10.0, 20.0, d.base_nel_price)
+        el_exp, _ = d.compute_energy_split(10.0, 40.0, d.base_nel_price)
+        assert el_exp < el_base, "More expensive electricity should decrease EL share"
+
+    def test_region_specific_el_fraction(self):
+        """Different regions with different EL fractions reproduce correctly."""
+        for el_frac in [0.10, 0.25, 0.40]:
+            d = KLEMDriver(
+                base_gdp=500.0, base_population=50.0,
+                base_energy_demand_ej=5.0, base_energy_price=4.0,
+                base_el_fraction=el_frac, base_el_price=18.0,
+            )
+            el_ej, nel_ej = d.compute_energy_split(5.0, 18.0, d.base_nel_price)
+            assert el_ej == pytest.approx(5.0 * el_frac, rel=1e-6)
+            assert el_ej + nel_ej == pytest.approx(5.0, rel=1e-9)

@@ -308,15 +308,14 @@ class TestEndogenousGDP:
     """Test that endogenous GDP (two-pass TFP) tracks SSP trajectory."""
 
     def test_endogenous_gdp_tracks_ssp(self):
-        """Full model run via oop_run_model: endogenous GDP within 25% of SSP.
+        """Full model run via oop_run_model: endogenous GDP within 1% of target.
 
-        Uses the full run loop with AR6 calibration, trade, and warm-up.
-        The two-pass TFP calibration makes CES output approximate SSP GDP.
-        Tolerance is 25% because of the mismatch between KLEM aggregate
-        energy and sector-level energy demand (intensity ratio normalizes
-        the time pattern, not the level).
+        Uses the full run loop with GCAM calibration, trade, and warm-up.
+        The iterative TFP calibration makes CES output match the calibrator
+        GDP target (GCAM MER).  Tolerance is 1% — CES-determined GDP should
+        closely track the calibrator trajectory when TFP is properly set.
         """
-        from ghim.build import oop_run_model
+        from ghim.build import oop_run_model, build_oop_model
         from ghim.data.ssp import load_ssp_data_r32
         from ghim.core.config import FUTURE_YEARS, EconomyConfig
 
@@ -325,7 +324,10 @@ class TestEndogenousGDP:
             pytest.skip("endogenous_gdp is disabled in config")
 
         ssp_data = load_ssp_data_r32("SSP2")
-        gdp_df = ssp_data["gdp"]
+
+        # Build model to access the calibrator (actual GDP target source)
+        model, _, _ = build_oop_model(ssp_data, "SSP2")
+        calibrator = model.calibrator
 
         results = oop_run_model(ssp_data, "SSP2")
 
@@ -334,13 +336,12 @@ class TestEndogenousGDP:
             state = results[i + 1]
             global_gdp = sum(rs.gdp for rs in state.regions.values())
             global_target = sum(
-                float(gdp_df.loc[name, period])
+                calibrator.get_gdp(period, name) or 0.0
                 for name in state.regions
-                if period in gdp_df.columns
             )
             if global_target > 0:
                 dev = abs(global_gdp - global_target) / global_target
-                assert dev < 0.25, (
+                assert dev < 0.01, (
                     f"Period {period}: global GDP dev {dev:.1%} "
-                    f"(model={global_gdp:.0f}, SSP={global_target:.0f})"
+                    f"(model={global_gdp:.0f}, target={global_target:.0f})"
                 )

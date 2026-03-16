@@ -360,20 +360,32 @@ def build_region(
 
     total_final = max(sum(fd.values()), 0.1)
 
-    # Economy
+    # Economy — base-year EL/NEL from GCAM calibration data
     base_energy_price = KLEMDriver.composite_energy_price(
         carrier_prices,
         {c: 1.0 for c in carrier_prices},
+    )
+    base_el_fraction = 0.20  # fallback
+    if calibrator is not None and calibrator.available:
+        fe_shares = calibrator.get_fe_target_shares(BASE_YEAR, region_name)
+        if fe_shares:
+            el_share = fe_shares.get("electricity", 0.0)
+            if el_share > 0.01:
+                base_el_fraction = el_share
+    base_el_price = carrier_prices.get(
+        Carrier.ELECTRICITY, carrier_prices.get("electricity", 20.0)
     )
     economy = KLEMDriver(
         base_gdp, base_pop, total_final,
         base_energy_price=base_energy_price,
         region=region_name,
+        base_el_fraction=base_el_fraction,
+        base_el_price=base_el_price,
     )
 
     # --- Demand sectors ---
-    # Use AR6 carrier shares for initial calibration when available.
-    # AR6 reports fuel input (EJ).  calibrate() sets base_demand = sum,
+    # Use GCAM carrier shares for initial calibration when available.
+    # GCAM reports fuel input (EJ).  calibrate() sets base_demand = sum,
     # then _fixup_base_demand adjusts to correct service units.
     def _ar6_carrier_demands(sector_name: str, total_ej: float,
                               fallback_fn) -> dict[str, float]:
@@ -385,7 +397,7 @@ def build_region(
                 return {c: s * total_ej for c, s in shares.items()}
         return fallback_fn(total_ej)
 
-    use_ar6 = calibrator is not None and calibrator.available
+    has_calibrator = calibrator is not None and calibrator.available
 
     industry = IndustrySector()
     ind_demands = _ar6_carrier_demands(
@@ -394,7 +406,7 @@ def build_region(
     industry.calibrate(
         ind_demands, carrier_prices, base_gdp, base_population=base_pop,
     )
-    if use_ar6:
+    if has_calibrator:
         _fixup_base_demand(industry, calibrator, carrier_prices, "industry", region_name)
 
     buildings = BuildingsSector()
@@ -405,11 +417,11 @@ def build_region(
         bld_demands, carrier_prices, base_gdp,
         hdd_base=1.0, cdd_base=1.0, base_population=base_pop,
     )
-    if use_ar6:
+    if has_calibrator:
         _fixup_base_demand(buildings, calibrator, carrier_prices, "buildings", region_name)
 
     # Subsector-level buildings calibration (GCAM provides heating/cooling/other detail)
-    if (use_ar6
+    if (has_calibrator
         and hasattr(calibrator, 'get_subsector_total')
         and hasattr(calibrator, 'get_subsector_carrier_shares')):
         _apply_subsector_calibration(buildings, calibrator, carrier_prices, region_name)
@@ -432,7 +444,7 @@ def build_region(
         "transport", fd.get("transport", 1.0), _transport_carrier_demands,
     )
     transport.calibrate(tr_demands, carrier_prices, base_gdp)
-    if use_ar6:
+    if has_calibrator:
         _fixup_base_demand(transport, calibrator, carrier_prices, "transport", region_name)
 
     agriculture = AgricultureSector()
@@ -1421,4 +1433,31 @@ def oop_run_model(
         save_calibrated_model(model, state, solver, _save_path, _tcfg)
         logger.info("Calibrated model saved to %s", _save_path)
 
+    # Auto-save results + calibrator for quick analysis reload
+    try:
+        import pickle, os
+        out_dir = os.path.join(os.path.dirname(__file__), "output", "runs")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "latest.pkl")
+        with open(out_path, "wb") as f:
+            pickle.dump({
+                "results": results,
+                "calibrator": getattr(model, "calibrator", None),
+                "scenario": scenario,
+            }, f)
+        logger.info("Results saved to %s", out_path)
+    except Exception as e:
+        logger.warning("Failed to auto-save results: %s", e)
+
     return results
+
+
+def load_latest() -> dict:
+    """Load the latest auto-saved model results.
+
+    Returns dict with keys: results, calibrator, scenario.
+    """
+    import pickle, os
+    path = os.path.join(os.path.dirname(__file__), "output", "runs", "latest.pkl")
+    with open(path, "rb") as f:
+        return pickle.load(f)

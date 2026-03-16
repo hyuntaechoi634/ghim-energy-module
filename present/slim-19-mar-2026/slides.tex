@@ -1287,12 +1287,11 @@ $P_{svc} = \sum_c s_c \cdot C_c / eff_c^{svc}$ \;{\tiny(cost/GJ-service)}\\[2pt]
   \node[tbox, minimum width=2.2cm] (tr_elec) at (0, -2) {Electricity\\Generation};
 
   % Primaries (elec-only) — grouped box
-  \def\erow{1.2}  % half-width of each row
-  \node[pbox, fill=green!8, draw=green!40, minimum width=0.9cm] (p_sol)  at (-\erow, -3.5) {Solar};
-  \node[pbox, fill=green!8, draw=green!40, minimum width=0.9cm] (p_wind) at (0, -3.5)      {Wind};
-  \node[pbox, fill=green!8, draw=green!40, minimum width=0.9cm] (p_hyd)  at (\erow, -3.5)  {Hydro};
-  \node[pbox, fill=green!8, draw=green!40, minimum width=1.0cm] (p_u)    at (-0.65, -4.3)  {Uranium};
-  \node[pbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_geo)  at (0.65, -4.3)   {Geothermal};
+  \node[pbox, fill=green!8, draw=green!40, minimum width=0.9cm] (p_sol)  at (-1.05, -3.5) {Solar};
+  \node[pbox, fill=green!8, draw=green!40, minimum width=0.9cm] (p_wind) at (0, -3.5)     {Wind};
+  \node[pbox, fill=green!8, draw=green!40, minimum width=0.9cm] (p_hyd)  at (1.05, -3.5)  {Hydro};
+  \node[pbox, fill=green!8, draw=green!40, minimum width=1.0cm] (p_u)    at (-0.8, -4.3)  {Uranium};
+  \node[pbox, fill=green!8, draw=green!40, minimum width=1.2cm] (p_geo)  at (0.8, -4.3)   {Geothermal};
   % Group outline
   \begin{pgfonlayer}{background}
     \node[rounded corners=4pt, draw=green!30, fill=green!3, line width=0.6pt,

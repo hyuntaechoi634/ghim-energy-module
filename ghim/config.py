@@ -82,15 +82,16 @@ DEMAND_LOGIT_EXP: float = -3.0
 
 # Preference factor logit (MERGE-style)
 PREF_LOGIT_SCALE: float = 0.3
-PREF_DECAY_RATE: float = 0.02
+PREF_DECAY_RATE: float = 0.0
 LOGIT_EXP_PREF: float = -4.0
 
 # Per-technology annual decay rates for preference factors
+# All set to 0 — preference factors frozen post-calibration.
 PREF_DECAY_RATES: dict[str, float] = {
-    "solar": 0.03, "wind": 0.03,
-    "hydrogen": 0.03, "electrolysis": 0.03,
-    "electricity": 0.02, "biomass": 0.02,
-    "nuclear": 0.01, "refined liquids": 0.01,
+    "solar": 0.0, "wind": 0.0,
+    "hydrogen": 0.0, "electrolysis": 0.0,
+    "electricity": 0.0, "biomass": 0.0,
+    "nuclear": 0.0, "refined liquids": 0.0,
     "coal": 0.0, "gas": 0.0, "gas_cc": 0.0,
     "hydro": 0.0, "oil": 0.0, "smr": 0.0,
 }

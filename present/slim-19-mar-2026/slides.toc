@@ -1,9 +1,7 @@
 \beamer@sectionintoc {1}{Introduction}{3}{0}{1}
 \beamer@sectionintoc {2}{Framework \& Data}{9}{0}{2}
-\beamer@sectionintoc {3}{Economy}{25}{0}{3}
-\beamer@sectionintoc {4}{Energy System}{34}{0}{4}
-\beamer@sectionintoc {5}{Technology Choice}{46}{0}{5}
-\beamer@sectionintoc {6}{Solver}{53}{0}{6}
-\beamer@sectionintoc {7}{Results \& Next Steps}{56}{0}{7}
-\beamer@sectionintoc {8}{Appendix}{64}{1}{8}
-\beamer@sectionintoc {9}{Data Processing}{75}{1}{9}
+\beamer@sectionintoc {3}{Economy}{24}{0}{3}
+\beamer@sectionintoc {4}{Energy System}{30}{0}{4}
+\beamer@sectionintoc {5}{Technology Choice}{38}{0}{5}
+\beamer@sectionintoc {6}{Results \& Next Steps}{44}{0}{6}
+\beamer@sectionintoc {7}{Appendix}{53}{1}{7}

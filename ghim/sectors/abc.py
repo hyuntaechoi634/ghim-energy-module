@@ -45,18 +45,6 @@ def _interpolate_curve(
 
 
 # ===================================================================
-# Carrier-level preference decay rates (demand-side, annual)
-# ===================================================================
-
-CARRIER_PREF_DECAY: dict[str, float] = {
-    "electricity": 0.02,
-    "h2": 0.03,
-    "biofuel": 0.02,
-    # All others: 0.0 (mature, no decay)
-}
-
-
-# ===================================================================
 # Subsector — logit competition among EndUseTechs
 # ===================================================================
 
@@ -167,18 +155,14 @@ class Subsector:
         self.last_shares = base_shares.copy()
 
     def _decayed_pref_factors(self, year: int) -> np.ndarray:
-        """Apply exponential preference decay by carrier type.
+        """Return preference factors (no decay).
 
-        p_i(t) = p_i(cal) × (1 − decay_rate)^(t − t_cal)
+        Technology adoption dynamics are handled by learning curves
+        (TechChange) through the cost channel, not preference decay.
         """
         if self.pref_factors is None:
             return np.zeros(len(self.techs))
-        elapsed = max(year - self.calibration_year, 0)
-        decayed = np.array([
-            pf * (1.0 - CARRIER_PREF_DECAY.get(t.carrier, 0.0)) ** elapsed
-            for t, pf in zip(self.techs, self.pref_factors)
-        ])
-        return decayed
+        return self.pref_factors.copy()
 
 
 # ===================================================================
@@ -203,12 +187,9 @@ class DemandSector(ABC):
     income_elasticity: float = 0.5
     price_elasticity: float = -0.3
 
-    # Per-period demand scaling (legacy, kept for backward compat; prefer sector_pref_weight)
-    _demand_scale: float = 1.0
-
     # Sector-level preference weight added to sector_price_index ($/GJ).
     # Calibrated inversely each period so demand_envelope reproduces GCAM
-    # sector totals via the price elasticity channel — replaces _demand_scale.
+    # sector totals via the price elasticity channel.
     sector_pref_weight: float = 0.0
 
     # Income elasticity curve: list of (gdp_per_cap_2020k, elasticity) tuples.
@@ -269,6 +250,30 @@ class DemandSector(ABC):
             gdp_ratio ** alpha
             * price_ratio ** self.price_elasticity
         )
+
+    # ---- Recursive-dynamic base update ----
+
+    def update_base(self, rs: RegionState, sector_key: str) -> None:
+        """Update base to previous period's converged values (recursive-dynamic).
+
+        Called after each period converges so that next period's demand_envelope
+        uses D(t-1), GDP(t-1), P(t-1) instead of base-year values.  This keeps
+        GDP ratios near ~1.1× per step and prevents compounding blowup in
+        high-growth regions.
+        """
+        new_demand = sum(rs.sector_demand.get(sector_key, {}).values())
+        if new_demand > 0:
+            self.base_demand = new_demand
+        if rs.gdp > 0:
+            self.base_gdp = rs.gdp
+        # Store market price *excluding* sector_pref_weight so that the
+        # calibration inverse-solve (which resets weight to 0) starts clean.
+        saved_weight = self.sector_pref_weight
+        self.sector_pref_weight = 0.0
+        new_price = self.sector_price_index(rs)
+        self.sector_pref_weight = saved_weight
+        if new_price > 0:
+            self.base_price = new_price
 
     # ---- Abstract methods ----
 

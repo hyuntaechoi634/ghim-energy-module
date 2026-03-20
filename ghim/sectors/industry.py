@@ -122,7 +122,11 @@ class IndustrySector(DemandSector):
         )
         # EJ / million people × 1e3 = GJ/cap
         energy_per_cap_gj = demand_ej * 1e3 / pop
-        return _interpolate_curve(_IND_INCOME_ELAS_CURVE, energy_per_cap_gj)
+        elas = _interpolate_curve(_IND_INCOME_ELAS_CURVE, energy_per_cap_gj)
+        # Clamp to zero: negative elasticity causes cobweb oscillation
+        # in dynamic computation (unlike GCAM's static pre-computation).
+        # α=0 means satiation — consistent with buildings/transport design.
+        return max(elas, 0.0)
 
     def compute_demand(
         self, rs: RegionState, policy: Any = None,

@@ -1012,25 +1012,23 @@ def _apply_calibration(
         if model.exogenous_gdp is not None:
             model.exogenous_gdp = None
 
-        if _post_mode == "decay" and _run_end > _cal_end:
-            # Linear decay: pref_weight → 0 by run_end
-            t = (period - _cal_end) / (_run_end - _cal_end)
-            decay = max(1.0 - t, 0.0)
-            for region_name, region in model.regions.items():
-                for sector in region.demand_sectors:
-                    if hasattr(sector, '_cal_end_pref_weight'):
-                        sector.sector_pref_weight = (
-                            sector._cal_end_pref_weight * decay
-                        )
-                    # Release inline recal targets gradually
-                    if decay < 0.01:
-                        for sub in sector.subsectors:
-                            if hasattr(sub, '_target_svc_shares'):
-                                sub._target_svc_shares = None
-                for sector in region.transformation:
-                    if decay < 0.01 and hasattr(sector, '_target_tech_shares'):
-                        sector._target_tech_shares = None
-        # HOLD mode: all calibrated values persist from cal_end
+        # Post-cal strategy:
+        #   - sector_pref_weight: HOLD at cal_end value (anchors sector totals)
+        #   - _target_svc_shares: RELEASE immediately (carrier mix responds to prices)
+        #   - _target_tech_shares: RELEASE immediately (elec tech mix responds to prices)
+        # This keeps demand levels stable while allowing endogenous fuel switching.
+        for region_name, region in model.regions.items():
+            for sector in region.demand_sectors:
+                # Hold pref_weight at cal_end value (set in snapshot block)
+                if hasattr(sector, '_cal_end_pref_weight'):
+                    sector.sector_pref_weight = sector._cal_end_pref_weight
+                # Release subsector carrier mix targets
+                for sub in sector.subsectors:
+                    if hasattr(sub, '_target_svc_shares'):
+                        sub._target_svc_shares = None
+            for sector in region.transformation:
+                if hasattr(sector, '_target_tech_shares'):
+                    sector._target_tech_shares = None
         return
 
     for region_name, region in model.regions.items():
@@ -1231,8 +1229,6 @@ def _apply_calibration(
                         sector.sector_pref_weight = P * (
                             ratio ** (1.0 / gamma) - 1.0
                         )
-                    else:
-                        sector._demand_scale = ratio
 
                 rs.gdp = orig_gdp
 
@@ -1362,21 +1358,21 @@ def oop_run_model(
                 if hasattr(sector, "vintage") and sector.vintage is not None:
                     sector.vintage.prune_retired(period)
 
-            # Demand sector: carry forward converged demand for next period
+            # Demand sector: carry forward converged demand for next period.
+            # Industry income elasticity uses lagged per-capita energy
+            # (A32 curve, same as GCAM R pre-computation). No damping:
+            # the curve is monotonically decreasing (negative feedback).
             for sector in region.demand_sectors:
-                if hasattr(sector, '_last_demand_ej'):
-                    sd = rs.sector_demand.get(
-                        _SECTOR_AR6_NAME.get(type(sector).__name__), {},
-                    )
+                sector_key = _SECTOR_AR6_NAME.get(type(sector).__name__)
+                if hasattr(sector, '_last_demand_ej') and sector_key:
+                    sd = rs.sector_demand.get(sector_key, {})
                     if sd:
-                        new_demand = sum(sd.values())
-                        # Damped update to prevent cobweb oscillation
-                        # in post-cal when income elasticity feedback loops
-                        old = sector._last_demand_ej
-                        if old > 0:
-                            sector._last_demand_ej = 0.7 * new_demand + 0.3 * old
-                        else:
-                            sector._last_demand_ej = new_demand
+                        sector._last_demand_ej = sum(sd.values())
+
+                # Recursive-dynamic: shift base to this period's converged
+                # values so next period uses D(t)/GDP(t)/P(t) as reference.
+                if sector_key:
+                    sector.update_base(rs, sector_key)
 
         # --- TechChange: learning curve updates (gap #2) ---
         if model.tech_change is not None:

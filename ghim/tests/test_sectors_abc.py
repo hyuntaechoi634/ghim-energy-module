@@ -11,7 +11,6 @@ from ghim.sectors.abc import (
     Subsector,
     DemandSector,
     TransformationSector,
-    CARRIER_PREF_DECAY,
 )
 from ghim.sectors.agriculture import AgricultureSector
 from ghim.sectors.refining import RefinedOilSector
@@ -91,38 +90,26 @@ class TestSubsector:
 
 
 class TestSubsectorPrefDecay:
-    def test_no_decay_mature_carriers(self):
+    """Preference factors are returned unchanged (no decay)."""
+
+    def test_no_decay_any_carrier(self):
+        sub = Subsector("test", [
+            EndUseTech(carrier="electricity"),
+            EndUseTech(carrier="gas"),
+            EndUseTech(carrier="h2"),
+        ])
+        sub.pref_factors = np.array([1.0, 2.0, 3.0])
+        decayed = sub._decayed_pref_factors(2051)  # 30 years later
+        np.testing.assert_array_equal(decayed, [1.0, 2.0, 3.0])
+
+    def test_none_pref_returns_zeros(self):
         sub = Subsector("test", [
             EndUseTech(carrier="gas"),
             EndUseTech(carrier="coal"),
         ])
-        sub.pref_factors = np.array([1.0, 2.0])
-        decayed = sub._decayed_pref_factors(2021)
-        np.testing.assert_array_equal(decayed, [1.0, 2.0])  # base year
-        decayed_30 = sub._decayed_pref_factors(2051)
-        np.testing.assert_array_equal(decayed_30, [1.0, 2.0])  # no decay
-
-    def test_electricity_decays(self):
-        sub = Subsector("test", [
-            EndUseTech(carrier="electricity"),
-            EndUseTech(carrier="gas"),
-        ])
-        sub.pref_factors = np.array([5.0, 5.0])
-        decayed = sub._decayed_pref_factors(2051)  # 30 years
-        # electricity decays at 2%/yr: 5.0 × (0.98)^30
-        expected_elec = 5.0 * (1.0 - 0.02) ** 30
-        assert decayed[0] == pytest.approx(expected_elec, rel=1e-6)
-        assert decayed[1] == pytest.approx(5.0)  # gas: no decay
-
-    def test_h2_decays_faster(self):
-        sub = Subsector("test", [
-            EndUseTech(carrier="h2"),
-            EndUseTech(carrier="electricity"),
-        ])
-        sub.pref_factors = np.array([5.0, 5.0])
+        sub.pref_factors = None
         decayed = sub._decayed_pref_factors(2051)
-        # H2 at 3%, elec at 2%
-        assert decayed[0] < decayed[1]  # H2 decays faster
+        np.testing.assert_array_equal(decayed, [0.0, 0.0])
 
 
 # ===========================================================================

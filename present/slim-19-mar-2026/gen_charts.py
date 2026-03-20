@@ -70,46 +70,31 @@ def chart_supply_curve():
 
 
 def chart_s_curve():
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5),
-                                    gridspec_kw={"width_ratios": [1.6, 1]})
-    k = 0.1
-    rho = 0.75
+    fig, ax = plt.subplots(figsize=(8, 5))
+    # GCAM A23.globaltech_retirement.csv — actual parameters
+    # Same steepness=0.1, two lifetime groups + renewables hard cutoff
     techs = [
-        ("Coal", 60, "#2C3E50"),
-        ("Gas CC", 45, "#C0392B"),
-        ("Nuclear", 45, "#8B4513"),
-        ("Hydro", 100, "#2471A3"),
-        ("Biomass", 40, "#808000"),
-        ("Oil", 45, "#999999"),
+        ("Coal / Nuclear / Biomass", 60, 30,   0.1, "#2C3E50", "-"),
+        ("Gas CC / Oil",             45, 22.5, 0.1, "#C0392B", "-"),
     ]
-    ages = np.linspace(0, 80, 400)
-    for name, L, color in techs:
-        half = rho * L
-        s0 = 1.0 / (1.0 + np.exp(k * (0 - half)))
-        surv = (1.0 / (1.0 + np.exp(k * (ages - half)))) / s0
-        surv = np.clip(surv, 0, 1)
-        ax1.plot(ages, surv, color=color, lw=2,
-                 label=f"{name} (L={L}, t\u00bd={int(half)})")
-    ax1.set_xlabel("Plant age (years)")
-    ax1.set_ylabel("Survival Fraction")
-    ax1.set_title("S-Curve Survival (gradual decline)",
-                  fontsize=12, fontweight="bold", color=ACCENT, pad=8)
-    ax1.set_xlim(0, 80)
-    ax1.set_ylim(-0.02, 1.05)
-    ax1.legend(loc="lower left", frameon=True, edgecolor="#CCCCCC", fontsize=8)
-    ax1.grid(True, alpha=0.5)
-    ages_r = np.linspace(0, 40, 400)
-    for name, L, color in [("Wind", 30, ACCENT), ("Solar", 30, "#DAA520")]:
-        surv = np.where(ages_r <= L, 1.0, 0.0)
-        ax2.plot(ages_r, surv, color=color, lw=2.5, label=f"{name} (L={L})")
-    ax2.set_xlabel("Plant age (years)")
-    ax2.set_ylabel("Survival Fraction")
-    ax2.set_title("Hard Cutoff (renewables)",
-                  fontsize=12, fontweight="bold", color=ACCENT, pad=8)
-    ax2.set_xlim(0, 40)
-    ax2.set_ylim(-0.02, 1.15)
-    ax2.legend(loc="upper right", frameon=True, edgecolor="#CCCCCC", fontsize=8)
-    ax2.grid(True, alpha=0.5)
+    ages = np.linspace(0, 75, 1500)
+    for name, L, half, k, color, ls in techs:
+        if half is not None:
+            # S-curve + hard cutoff at lifetime (matches GCAM C++)
+            s0 = 1.0 / (1.0 + np.exp(k * (0 - half)))
+            surv = (1.0 / (1.0 + np.exp(k * (ages - half)))) / s0
+            surv = np.clip(surv, 0, 1)
+        else:
+            # Pure hard cutoff (renewables — no S-curve in GCAM)
+            surv = np.where(ages <= L, 1.0, 0.0)
+        ax.plot(ages, surv, color=color, lw=2.5, ls=ls,
+                label=f"{name}  (L={L}" + (f", t\u00bd={int(half)}" if half else "") + ")")
+    ax.set_xlabel("Plant age (years)")
+    ax.set_ylabel("Survival Fraction")
+    ax.set_xlim(0, 75)
+    ax.set_ylim(-0.02, 1.05)
+    ax.legend(loc="lower left", frameon=True, edgecolor="#CCCCCC", fontsize=8.5)
+    ax.grid(True, alpha=0.5)
     fig.tight_layout()
     fig.savefig(OUT_DIR / "s_curve.png", dpi=DPI)
     plt.close(fig)
@@ -122,22 +107,22 @@ def chart_profit_shutdown():
     steepness = 6
     pi = np.linspace(-0.8, 0.8, 600)
     p_pi = 1.0 / (1.0 + np.exp(-steepness * (pi - median)))
-    ax.axvspan(-0.8, -0.3, color="#FDEDEC", alpha=0.7, zorder=0)
-    ax.axvspan(-0.3, 0.1, color="#FEF9E7", alpha=0.7, zorder=0)
-    ax.axvspan(0.1, 0.8, color="#EAFAF1", alpha=0.7, zorder=0)
-    ax.text(-0.55, 0.92, "Uneconomic\n(capacity shuts down)",
-            fontsize=8.5, ha="center", va="top", color="#C0392B", fontstyle="italic")
-    ax.text(-0.10, 0.92, "Marginal",
-            fontsize=8.5, ha="center", va="top", color="#B7950B", fontstyle="italic")
-    ax.text(0.45, 0.92, "Profitable\n(most capacity runs)",
+    ax.axvspan(-0.8, -0.1, color="#EAFAF1", alpha=0.7, zorder=0)
+    ax.axvspan(-0.1, 0.3, color="#FEF9E7", alpha=0.7, zorder=0)
+    ax.axvspan(0.3, 0.8, color="#FDEDEC", alpha=0.7, zorder=0)
+    ax.text(-0.45, 0.92, "Profitable\n(most capacity runs)",
             fontsize=8.5, ha="center", va="top", color=ACCENT, fontstyle="italic")
-    ax.plot(pi, p_pi, color="#1B4F72", lw=2.8, zorder=3)
-    ax.plot(median, 0.5, "o", color="#C0392B", ms=9, zorder=4)
+    ax.text(0.10, 0.92, "Marginal",
+            fontsize=8.5, ha="center", va="top", color="#B7950B", fontstyle="italic")
+    ax.text(0.55, 0.92, "Uneconomic\n(capacity shuts down)",
+            fontsize=8.5, ha="center", va="top", color="#C0392B", fontstyle="italic")
+    ax.plot(-pi, p_pi, color="#1B4F72", lw=2.8, zorder=3)
+    ax.plot(-median, 0.5, "o", color="#C0392B", ms=9, zorder=4)
     ax.annotate("m = \u22120.1 (50% shutdown)",
-                xy=(median, 0.5), xytext=(median + 0.25, 0.35),
+                xy=(-median, 0.5), xytext=(-median - 0.25, 0.35),
                 fontsize=9, color=TEXT,
                 arrowprops=dict(arrowstyle="->", color="#999999", lw=1))
-    for xv in [-0.3, 0.1]:
+    for xv in [-0.1, 0.3]:
         ax.axvline(xv, color="#CCCCCC", ls=":", lw=1, zorder=1)
     ax.set_xlabel("Profit rate \u03c0 = (revenue \u2212 var_cost) / |var_cost|")
     ax.set_ylabel("Survival Fraction  P(\u03c0)")
